@@ -67,7 +67,11 @@ if __name__=='__main__':
     del non_augmented_dataset,dataset
 
     generator1 = torch.Generator().manual_seed(42)
-    train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [0.8,0.1,0.1], generator=generator1)
+    train_split=0.8
+    valid_split=0.1
+    test_split=0.1
+    train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+                                                                generator=generator1)
 
 
     model_name='KONet'
