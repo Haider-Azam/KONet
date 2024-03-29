@@ -74,7 +74,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='KONet'
+    model_name='conv_next'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -97,6 +97,20 @@ if __name__=='__main__':
                 ]
         freeze+=['features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
         freeze+=['features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
+    
+    elif model_name=='conv_next':
+        p=0.3
+        model=torchvision.models.convnext_tiny(weights='DEFAULT')
+        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                            torch.nn.Linear(in_features=768,out_features=n_classes),
+                                            )
+        frozen_layers=5
+        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)]
+        freeze+=['features.{}*.bias'.format(i) for i in range(frozen_layers)]
+
+        freeze=['features.5.{}*.weight'.format(i) for i in range(2)]
+        freeze+=['features.5.{}*.bias'.format(i) for i in range(2)]
+
     elif model_name=='KONet':
         m1_ratio=0.6
         m2_ratio=0.4
@@ -118,7 +132,7 @@ if __name__=='__main__':
 
         monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
     cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}best_param.pkl',
-                f_optimizer=f'{model_name}best_opt.pkl', f_history=f'{model_name}best_history.json')
+                  f_optimizer=None,f_history=None)
     cb = skorch.callbacks.Freezer(freeze)
     classifier = skorch.NeuralNetClassifier(
             model,
@@ -134,7 +148,7 @@ if __name__=='__main__':
             iterator_valid__num_workers=4,
             iterator_train__persistent_workers=True,
             iterator_valid__persistent_workers=True,
-            batch_size=32,
+            batch_size=8,
             device='cuda',
             callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
             warm_start=True,

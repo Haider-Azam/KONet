@@ -78,7 +78,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='KONet'
+    model_name='conv_next_distilled'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -101,6 +101,20 @@ if __name__=='__main__':
                 ]
         freeze+=['features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
         freeze+=['features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
+    
+    elif model_name=='conv_next' or 'conv_next_distilled':
+        p=0.3
+        model=torchvision.models.convnext_tiny(weights='DEFAULT')
+        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                            torch.nn.Linear(in_features=768,out_features=n_classes),
+                                            )
+        frozen_layers=5
+        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)]
+        freeze+=['features.{}*.bias'.format(i) for i in range(frozen_layers)]
+
+        freeze=['features.5.{}*.weight'.format(i) for i in range(2)]
+        freeze+=['features.5.{}*.bias'.format(i) for i in range(2)]
+
     elif model_name=='KONet':
         m1_ratio=0.6
         m2_ratio=0.4
@@ -121,8 +135,7 @@ if __name__=='__main__':
 
 
         monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
-    cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}best_param.pkl',
-                f_optimizer=f'{model_name}best_opt.pkl', f_history=f'{model_name}best_history.json')
+    cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}best_param.pkl')
     cb = skorch.callbacks.Freezer(freeze)
     classifier = skorch.NeuralNetClassifier(
             model,
@@ -149,16 +162,34 @@ if __name__=='__main__':
         f_params=f'model/{model_name}OtherFinetunedbest_param.pkl')
     print("Paramters Loaded")
 
-    prob=classifier.predict_proba(test_set)
-    pred_labels=np.argmax(prob,axis=1)
-    actual_labels=[label[1] for label in test_set]
-    
-    auc=roc_auc_score(actual_labels,prob[:,1])
-    actual_labels=np.array(actual_labels)
-    accuracy=np.mean(pred_labels==actual_labels)
-    f1=f1_score(actual_labels,pred_labels)
+    iterations=5
+    accuracy=[]
+    f1=[]
+    auc=[]
+    test_loader=DataLoader(test_set,batch_size=8,shuffle=False)
+    for _ in range(iterations):
+        probs=[]
+        actual_labels=[]
+        for test_features, actual_lb in iter(test_loader):
+            prob=classifier.predict_proba(test_features)
+            actual_lb=np.array(actual_lb)
+            probs.append(prob)
+            actual_labels.append(actual_lb)
+
+        probs=np.concatenate(probs)
+        pred_labels=np.argmax(probs,axis=1)
+        actual_labels=np.concatenate(actual_labels)
+
+        iteration_auc=roc_auc_score(actual_labels,probs[:,1])
+        iteration_accuracy=np.mean(pred_labels==actual_labels)
+        iteration_f1=f1_score(actual_labels,pred_labels)
+
+        accuracy.append(iteration_accuracy)
+        f1.append(iteration_f1)
+        auc.append(iteration_auc)
+
     print(model_name)
-    #Accuracy seems incorrect compared to the one reported by skorch
-    print(f"Accuracy:{accuracy}")
-    print(f"F1-Score:{f1}")
-    print(f"roc_auc score:{auc}")
+
+    print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
+    print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
+    print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
