@@ -154,6 +154,7 @@ if __name__=='__main__':
             iterator_train__persistent_workers=True,
             iterator_valid__persistent_workers=True,
             batch_size=8,
+            classes=[0,1],
             device='cuda',
             callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
             warm_start=True,

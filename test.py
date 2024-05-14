@@ -76,7 +76,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='conv_next_distilled'
+    model_name='dense'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -173,9 +173,9 @@ if __name__=='__main__':
             probs.append(prob)
             actual_labels.append(actual_lb)
 
-        probs=np.concatenate(probs)
+        probs=np.concatenate(probs,axis=0)
         pred_labels=np.argmax(probs,axis=1)
-        actual_labels=np.concatenate(actual_labels)
+        actual_labels=np.concatenate(actual_labels,axis=0)
 
         iteration_auc=roc_auc_score(actual_labels,probs[:,1])
         iteration_accuracy=np.mean(pred_labels==actual_labels)

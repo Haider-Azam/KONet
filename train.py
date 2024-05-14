@@ -74,7 +74,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='conv_next'
+    model_name='dense'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -149,6 +149,7 @@ if __name__=='__main__':
             iterator_train__persistent_workers=True,
             iterator_valid__persistent_workers=True,
             batch_size=8,
+            classes=[0,1],
             device='cuda',
             callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
             warm_start=True,
