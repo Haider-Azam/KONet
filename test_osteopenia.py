@@ -46,7 +46,7 @@ class KONet(torch.nn.Module):
         return out
 
 
-def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000,class_dict=None):
 
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
@@ -63,10 +63,15 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
     non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
     dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     factor=augmented_dataset_size//len(dataset)-1
+    if class_dict is not None:
+        for key in class_dict:
+            dataset.class_to_idx[key]=class_dict[key]
+            non_augmented_dataset.class_to_idx[key]=class_dict[key]
 
     new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
     del non_augmented_dataset,dataset
 
+    
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
     train_split=0.8
@@ -74,14 +79,13 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
     test_split=0.1
     return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
-
         
+
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
     labels=[]
     probabilities=[]
-    
     for data,label in tqdm(dataloader):
         with torch.no_grad():
             data , label=data.to(device) , label.to(device)
@@ -102,73 +106,38 @@ def test(model,dataloader,loss_fn):
 if __name__=='__main__':
     
     warnings.filterwarnings("ignore")
-    n_classes=2
+    n_classes=3
     image_shape=224
     augmented_dataset_size=4000
-    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
-    
-    train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
+
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
+
+    new_n_classes=3
+
+
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='conv_next_distilled_incremental '
-    large_model_name='conv_next_distilled'
+    model_name='dense_incremental_3_class'
+    large_model_name='dense'
     #Large model initiallization
 
-    if large_model_name=='dense':
+    if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-    elif large_model_name=='KONet':
-        m1_ratio=0.6
-        m2_ratio=0.4
-        m1_dropout=0.1
-        m2_dropout=0.3
-        model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
-
-    elif large_model_name=='conv_next' or large_model_name=='conv_next_distilled':
-        p=0.3
-        model=torchvision.models.convnext_tiny(weights='DEFAULT')
-        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=768,out_features=n_classes),
-                                            )
-        
+    #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
     model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+
     model.to(device)
 
     loss_fn=torch.nn.CrossEntropyLoss()
     
-    test_dataloader1 = DataLoader(test_set1, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
-    
     test_dataloader2 = DataLoader(test_set2, batch_size=8, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
-
-    print('Testing on dataset 1')
-    iterations=5
-    accuracy=[]
-    f1=[]
-    auc=[]
-    for i in range(iterations):
-        model.eval()
     
-        _,labels,probabilities=test(model,test_dataloader1,loss_fn)
-        pred_labels=np.argmax(probabilities,axis=1)
-        iteration_auc=roc_auc_score(labels,probabilities[:,1])
-        iteration_accuracy=np.mean(pred_labels==labels)
-        iteration_f1=f1_score(labels,pred_labels)
-
-        accuracy.append(iteration_accuracy)
-        f1.append(iteration_f1)
-        auc.append(iteration_auc)
-
-    print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
-    print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
-    print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
-
-    print('Testing on dataset 2')
+    iterations=5
     accuracy=[]
     f1=[]
     auc=[]
@@ -177,10 +146,9 @@ if __name__=='__main__':
     
         _,labels,probabilities=test(model,test_dataloader2,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
-        
-        iteration_auc=roc_auc_score(labels,probabilities[:,1])
-        iteration_accuracy=np.mean(pred_labels==labels)
-        iteration_f1=f1_score(labels,pred_labels)
+        iteration_auc=roc_auc_score(labels,probabilities,average='weighted',multi_class='ovr')
+        iteration_accuracy=np.mean(pred_labels[labels==1]==labels[labels==1])
+        iteration_f1=f1_score(labels,pred_labels,average='weighted')
 
         accuracy.append(iteration_accuracy)
         f1.append(iteration_f1)
@@ -189,5 +157,3 @@ if __name__=='__main__':
     print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
-
-    

@@ -6,7 +6,7 @@ from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet1
 from torch.utils.data import DataLoader
 from copy import deepcopy
 from torch.nn import functional as F
-from sklearn.metrics import accuracy_score,roc_auc_score,f1_score
+from sklearn.metrics import accuracy_score
 import warnings
 from tqdm import tqdm
 import numpy as np
@@ -67,6 +67,7 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
     new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
     del non_augmented_dataset,dataset
 
+    
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
     train_split=0.8
@@ -74,14 +75,13 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
     test_split=0.1
     return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
-
         
+
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
     labels=[]
     probabilities=[]
-    
     for data,label in tqdm(dataloader):
         with torch.no_grad():
             data , label=data.to(device) , label.to(device)
@@ -105,89 +105,94 @@ if __name__=='__main__':
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
-    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
-    
-    train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
+
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
+
+    new_n_classes=3
+
+
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='conv_next_distilled_incremental '
-    large_model_name='conv_next_distilled'
+    
+    train_dataloader2 = DataLoader(train_set2, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+    
+    valid_dataloader1 = DataLoader(valid_set2, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+    
+    
+    model_name='dense_3_class'
+    large_model_name='denseOtherFinetuned'
     #Large model initiallization
 
-    if large_model_name=='dense':
+    if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-    elif large_model_name=='KONet':
-        m1_ratio=0.6
-        m2_ratio=0.4
-        m1_dropout=0.1
-        m2_dropout=0.3
-        model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
+    #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
+    model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
+    old_classifier=model.classifier.state_dict()
 
-    elif large_model_name=='conv_next' or large_model_name=='conv_next_distilled':
-        p=0.3
-        model=torchvision.models.convnext_tiny(weights='DEFAULT')
-        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=768,out_features=n_classes),
+    model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                            torch.nn.Linear(in_features=1024,out_features=new_n_classes),
                                             )
-        
-    model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+    
+    #For generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
+    with torch.no_grad():
+        for name,param in model.classifier.named_parameters():
+            param[[0,2]]=old_classifier[name]
+
     model.to(device)
+    optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
 
+    model.train()
+    optimizer.zero_grad()
     loss_fn=torch.nn.CrossEntropyLoss()
-    
-    test_dataloader1 = DataLoader(test_set1, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
-    
-    test_dataloader2 = DataLoader(test_set2, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
 
-    print('Testing on dataset 1')
-    iterations=5
-    accuracy=[]
-    f1=[]
-    auc=[]
-    for i in range(iterations):
+    epochs=30
+
+    print('Training on second dataset')
+    best_test_acc=0
+    for i in range(epochs):
+        print('Training')
+        model.train()
+        total_loss=0
+        for train_data,train_label in tqdm(train_dataloader2):
+            
+            train_data , train_label=train_data.to(device) , train_label.to(device)
+
+            #Zero the gradient for every batch for mini-batch gradient descent
+            optimizer.zero_grad()
+
+            output=model(train_data)
+
+            loss=loss_fn(output , train_label)
+
+            total_loss+=loss
+
+            loss.backward()
+            optimizer.step()
+
+        print('Testing on first dataset')
         model.eval()
-    
-        _,labels,probabilities=test(model,test_dataloader1,loss_fn)
+
+        loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
-        iteration_auc=roc_auc_score(labels,probabilities[:,1])
-        iteration_accuracy=np.mean(pred_labels==labels)
-        iteration_f1=f1_score(labels,pred_labels)
+        accuracy1=np.mean(pred_labels==labels)
 
-        accuracy.append(iteration_accuracy)
-        f1.append(iteration_f1)
-        auc.append(iteration_auc)
 
-    print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
-    print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
-    print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
+        total_loss=total_loss/(len(train_dataloader2))
+        test_acc1=np.mean(accuracy1)
 
-    print('Testing on dataset 2')
-    accuracy=[]
-    f1=[]
-    auc=[]
-    for i in range(iterations):
-        model.eval()
-    
-        _,labels,probabilities=test(model,test_dataloader2,loss_fn)
-        pred_labels=np.argmax(probabilities,axis=1)
-        
-        iteration_auc=roc_auc_score(labels,probabilities[:,1])
-        iteration_accuracy=np.mean(pred_labels==labels)
-        iteration_f1=f1_score(labels,pred_labels)
+        print('Train Epoch:',i+1,'loss:',total_loss.item())
+        print('test loss1:',loss1.item(),'test accuracy1:',test_acc1)
 
-        accuracy.append(iteration_accuracy)
-        f1.append(iteration_f1)
-        auc.append(iteration_auc)
-
-    print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
-    print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
-    print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
-
-    
+        if best_test_acc<test_acc1:
+            best_test_acc=test_acc1
+            print('Loss improved, saving weights')
+            torch.save(model.state_dict(),f'model/{model_name}best_param.pkl') 
+    #loss,accuracy=test(model,test_dataloader2,loss_fn)
+    #print('loss:',loss,'\nAccuracy:',accuracy)
+    #torch.save(model.state_dict(),f'model/{model_name}best_param.pkl')

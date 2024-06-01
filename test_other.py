@@ -75,7 +75,7 @@ if __name__=='__main__':
     train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 
-    model_name='dense'
+    model_name='conv_next_distilled'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -132,7 +132,7 @@ if __name__=='__main__':
     classifier.load_params(f_params=f'model/{model_name}best_param.pkl')
     print("Paramters Loaded")
 
-    iterations=5
+    iterations=1
     accuracy=[]
     f1=[]
     auc=[]
