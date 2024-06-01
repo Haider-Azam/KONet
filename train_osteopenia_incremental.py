@@ -241,22 +241,22 @@ if __name__=='__main__':
     old_model.to(device)
 
     loss_fn=torch.nn.CrossEntropyLoss()
-    optimizer=torch.optim.SGD(model.parameters(),lr=0.00001,momentum=0.9, weight_decay=5e-4)
+    optimizer=torch.optim.SGD(model.parameters(),lr=0.00002,momentum=0.9, weight_decay=5e-4)
     print('Extracting first dataset gradients')
     model,optpar_dict,fisher_dict=ewc_init(model,train_dataloader1,loss_fn,optimizer)
 
     model.train()
     optimizer.zero_grad()
-    #for name,param in model.named_parameters():
-    #    if 'classifier' not in name:
-    #        param.requires_grad=False
+    for name,param in model.named_parameters():
+        if 'classifier' not in name:
+            param.requires_grad=False
 
     print('Testing on old dataset')
     loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
     pred_labels=np.argmax(probabilities,axis=1)
     accuracy1=np.mean(pred_labels==labels)
     print('binary class accuracy',accuracy1)
-    ewc_lambda=1000
+    ewc_lambda=2
     epochs=30
 
     print('Training on second dataset')
@@ -281,7 +281,7 @@ if __name__=='__main__':
             
             distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
 
-            distill_loss=+distillation_loss(new_output,old_output)*ewc_lambda
+            distill_loss+=distillation_loss(new_output,old_output)
             
             loss+=distill_loss
 
