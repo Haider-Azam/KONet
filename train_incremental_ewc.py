@@ -153,8 +153,8 @@ if __name__=='__main__':
     valid_dataloader2 = DataLoader(valid_set2, batch_size=8, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
-    model_name='conv_next_distilled_incremental'
-    large_model_name='conv_next_distilled'
+    model_name='mobilenet_distilled_incremental'
+    large_model_name='mobilenet_distilled'
     #Large model initiallization
 
     if large_model_name=='dense':
@@ -177,6 +177,10 @@ if __name__=='__main__':
                                             torch.nn.Linear(in_features=768,out_features=n_classes),
                                             )
         
+    elif 'mobilenet' in large_model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+
     model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
     #model=increte_model(model,)
     

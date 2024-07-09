@@ -93,7 +93,7 @@ if __name__=='__main__':
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
     
-    elif model_name=='conv_next' or 'conv_next_distilled':
+    elif model_name=='conv_next' or model_name=='conv_next_distilled':
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),

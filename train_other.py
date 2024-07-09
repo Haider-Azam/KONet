@@ -73,8 +73,8 @@ if __name__=='__main__':
     train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 
-
-    model_name='conv_next'
+    freeze=[]
+    model_name='mobilenet'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -84,7 +84,7 @@ if __name__=='__main__':
         model.classifier[0]=torch.nn.Dropout(p=p,inplace=True)
         model.classifier[-1]=torch.nn.Linear(in_features=1280,out_features=n_classes)
         frozen_layers=4
-        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)] + ['features.{}*.bias'.format(i) for i in range(frozen_layers)]
+        freeze+=['features.{}*.weight'.format(i) for i in range(frozen_layers)] + ['features.{}*.bias'.format(i) for i in range(frozen_layers)]
 
     elif model_name=='dense':
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
@@ -92,7 +92,7 @@ if __name__=='__main__':
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-        freeze=['features.conv0.weight','features.conv0.bias','features.norm0.weight','features.norm0.bias',
+        freeze+=['features.conv0.weight','features.conv0.bias','features.norm0.weight','features.norm0.bias',
                 'features.denseblock1.*.weight','features.denseblock1.*.bias','features.denseblock2.*.weight','features.denseblock2.*.bias',
                 ]
         freeze+=['features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
@@ -105,7 +105,7 @@ if __name__=='__main__':
                                             torch.nn.Linear(in_features=768,out_features=n_classes),
                                             )
         frozen_layers=5
-        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)]
+        freeze+=['features.{}*.weight'.format(i) for i in range(frozen_layers)]
         freeze+=['features.{}*.bias'.format(i) for i in range(frozen_layers)]
 
         freeze=['features.5.{}*.weight'.format(i) for i in range(2)]
@@ -119,7 +119,7 @@ if __name__=='__main__':
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
         #Defines the blocks to be frozen
         m1_frozen_layers=4
-        freeze=['efficient.features.{}*.weight'.format(i) for i in range(m1_frozen_layers)]
+        freeze+=['efficient.features.{}*.weight'.format(i) for i in range(m1_frozen_layers)]
         freeze+=['efficient.features.{}*.bias'.format(i) for i in range(m1_frozen_layers)]
 
         freeze+=['dense.features.conv0.weight','dense.features.conv0.bias','dense.features.norm0.weight','dense.features.norm0.bias',
@@ -128,6 +128,10 @@ if __name__=='__main__':
                 ]
         freeze+=['dense.features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
         freeze+=['dense.features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
+
+    elif model_name=='mobilenet':
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
 
         monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])

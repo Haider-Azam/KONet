@@ -196,8 +196,8 @@ if __name__=='__main__':
                                    persistent_workers=True, shuffle=True)
     
     
-    model_name='conv_next_distilled_incremental_lwf_3_class'
-    large_model_name='conv_next_distilled_other'
+    model_name='mobilenet_distilled_incremental_lwf_3_class'
+    large_model_name='mobilenet_distilled_other'
     #Large model initiallization
 
     if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
@@ -215,6 +215,12 @@ if __name__=='__main__':
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=in_features,out_features=n_classes),
                                             )
+        
+    elif 'mobilenet' in large_model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        in_features=model.classifier[3].in_features
+        model.classifier[3]=torch.nn.Linear(in_features=in_features,out_features=n_classes)
+
     #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
     model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
 
@@ -222,20 +228,36 @@ if __name__=='__main__':
     old_model=copy.deepcopy(model)
     for name,param in old_model.named_parameters():
         param.requires_grad=False
-    old_classifier=model.classifier[2].state_dict()
 
-    model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=in_features,out_features=new_n_classes),
-                                            )
-    
-    #For later generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
-    with torch.no_grad():
-        for name,param in model.classifier[2].named_parameters():
-            param[[0,2]]=old_classifier[name]
-            #if 'weight' in name:
-            #    param[1]=0
-            #elif 'bias' in name:
-            #    param[1]=-3
+    if 'conv_next' in large_model_name :
+        old_classifier=model.classifier[2].state_dict()
+
+        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=in_features,out_features=new_n_classes),
+                                                )
+        
+        #For later generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
+        with torch.no_grad():
+            for name,param in model.classifier[2].named_parameters():
+                param[[0,2]]=old_classifier[name]
+                #if 'weight' in name:
+                #    param[1]=0
+                #elif 'bias' in name:
+                #    param[1]=-3
+
+    elif 'mobilenet' in large_model_name:
+        old_classifier=model.classifier[3].state_dict()
+
+        model.classifier[3]=torch.nn.Linear(in_features=in_features,out_features=new_n_classes)
+        
+        #For later generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
+        with torch.no_grad():
+            for name,param in model.classifier[3].named_parameters():
+                param[[0,2]]=old_classifier[name]
+                #if 'weight' in name:
+                #    param[1]=0
+                #elif 'bias' in name:
+                #    param[1]=-3
 
     model.to(device)
     old_model.to(device)
@@ -312,4 +334,4 @@ if __name__=='__main__':
             torch.save(model.state_dict(),f'model/{model_name}best_param.pkl') 
     #loss,accuracy=test(model,test_dataloader2,loss_fn)
     #print('loss:',loss,'\nAccuracy:',accuracy)
-    torch.save(model.state_dict(),f'model/{model_name}best_param.pkl')
+    #torch.save(model.state_dict(),f'model/{model_name}_param.pkl')

@@ -75,7 +75,7 @@ if __name__=='__main__':
     train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 
-    model_name='conv_next_distilled'
+    model_name='mobilenet_distilled'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -106,9 +106,13 @@ if __name__=='__main__':
         m2_dropout=0.3
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
         
-        model_name+='_other'
+    elif 'mobilenet' in model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
-        monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
+    model_name+='_other'
+
+    monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
     classifier = skorch.NeuralNetClassifier(
             model,
             criterion=torch.nn.CrossEntropyLoss(),

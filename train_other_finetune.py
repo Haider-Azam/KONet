@@ -101,7 +101,7 @@ if __name__=='__main__':
         freeze+=['features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
         freeze+=['features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
     
-    elif model_name=='conv_next' or 'conv_next_distilled':
+    elif model_name=='conv_next' or model_name=='conv_next_distilled':
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),

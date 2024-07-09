@@ -117,8 +117,8 @@ if __name__=='__main__':
 
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='dense_incremental_3_class'
-    large_model_name='dense'
+    model_name='mobilenet_distilled_incremental_lwf_3_class'
+    large_model_name='mobilenet'
     #Large model initiallization
 
     if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
@@ -127,6 +127,20 @@ if __name__=='__main__':
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
+        
+    elif 'conv_next' in large_model_name :
+        p=0.3
+        model=torchvision.models.convnext_tiny(weights='DEFAULT')
+        in_features=model.classifier[2].in_features
+        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                            torch.nn.Linear(in_features=in_features,out_features=n_classes),
+                                            )
+    
+    elif 'mobilenet' in large_model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        in_features=model.classifier[3].in_features
+        model.classifier[3]=torch.nn.Linear(in_features=in_features,out_features=n_classes)
+
     #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
     model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
 

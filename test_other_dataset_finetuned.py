@@ -12,7 +12,7 @@ from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
 from sklearn.metrics import roc_auc_score,f1_score
 import warnings
-
+from tqdm import tqdm
 class KONet(torch.nn.Module):
 
     def __init__(
@@ -78,7 +78,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='conv_next_distilled'
+    model_name='mobilenet_distilled_incremental'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -95,7 +95,7 @@ if __name__=='__main__':
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
     
-    elif model_name=='conv_next' or 'conv_next_distilled':
+    elif model_name=='conv_next' or model_name=='conv_next_distilled':
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
@@ -108,6 +108,10 @@ if __name__=='__main__':
         m1_dropout=0.1
         m2_dropout=0.3
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
+
+    elif 'mobilenet' in model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
     classifier = skorch.NeuralNetClassifier(
             model,

@@ -111,8 +111,8 @@ if __name__=='__main__':
     train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='conv_next_distilled_incremental '
-    large_model_name='conv_next_distilled'
+    model_name='mobilenet_distilled_incremental'
+    large_model_name='mobilenet_distilled'
     #Large model initiallization
 
     if large_model_name=='dense':
@@ -134,7 +134,11 @@ if __name__=='__main__':
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=768,out_features=n_classes),
                                             )
-        
+    
+    elif 'mobilenet' in large_model_name:
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+
     model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
     model.to(device)
 

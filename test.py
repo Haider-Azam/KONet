@@ -8,6 +8,7 @@ import skorch
 from skorch.helper import predefined_split
 from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
+from tqdm import tqdm
 from sklearn.metrics import roc_auc_score,f1_score
 import warnings
 
@@ -76,7 +77,7 @@ if __name__=='__main__':
                                                                 generator=generator1)
 
 
-    model_name='dense'
+    model_name='mobilenet_distilled'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -86,7 +87,6 @@ if __name__=='__main__':
         model.classifier[0]=torch.nn.Dropout(p=p,inplace=True)
         model.classifier[-1]=torch.nn.Linear(in_features=1280,out_features=n_classes)
         frozen_layers=4
-        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)] + ['features.{}*.bias'.format(i) for i in range(frozen_layers)]
 
     elif model_name=='dense':
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
@@ -94,24 +94,18 @@ if __name__=='__main__':
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-        freeze=['features.conv0.weight','features.conv0.bias','features.norm0.weight','features.norm0.bias',
-                'features.denseblock1.*.weight','features.denseblock1.*.bias','features.denseblock2.*.weight','features.denseblock2.*.bias',
-                ]
-        freeze+=['features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
-        freeze+=['features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
 
-    elif model_name=='conv_next' or 'conv_next_distilled':
+    elif 'mobilenet' in model_name:
+        print('working')
+        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+
+    elif 'conv_next' in model_name:
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=768,out_features=n_classes),
                                             )
-        frozen_layers=5
-        freeze=['features.{}*.weight'.format(i) for i in range(frozen_layers)]
-        freeze+=['features.{}*.bias'.format(i) for i in range(frozen_layers)]
-
-        freeze=['features.5.{}*.weight'.format(i) for i in range(2)]
-        freeze+=['features.5.{}*.bias'.format(i) for i in range(2)]
 
     elif model_name=='KONet':
         m1_ratio=0.6
@@ -119,22 +113,8 @@ if __name__=='__main__':
         m1_dropout=0.1
         m2_dropout=0.3
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
-        #Defines the blocks to be frozen
-        m1_frozen_layers=4
-        freeze=['efficient.features.{}*.weight'.format(i) for i in range(m1_frozen_layers)]
-        freeze+=['efficient.features.{}*.bias'.format(i) for i in range(m1_frozen_layers)]
-
-        freeze+=['dense.features.conv0.weight','dense.features.conv0.bias','dense.features.norm0.weight','dense.features.norm0.bias',
-                'dense.features.denseblock1.*.weight','dense.features.denseblock1.*.bias','dense.features.denseblock2.*.weight',
-                'dense.features.denseblock2.*.bias',
-                ]
-        freeze+=['dense.features.denseblock3.denselayer{}.*.weight'.format(i) for i in range(1,12)]
-        freeze+=['dense.features.denseblock3.denselayer{}.*.bias'.format(i) for i in range(1,12)]
 
 
-        monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
-    cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}best_param.pkl')
-    cb = skorch.callbacks.Freezer(freeze)
     classifier = skorch.NeuralNetClassifier(
             model,
             criterion=torch.nn.CrossEntropyLoss(),
@@ -151,7 +131,6 @@ if __name__=='__main__':
             iterator_valid__persistent_workers=True,
             batch_size=16,
             device='cuda',
-            callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
             warm_start=True,
             )
 
@@ -167,7 +146,7 @@ if __name__=='__main__':
     for _ in range(iterations):
         probs=[]
         actual_labels=[]
-        for test_features, actual_lb in iter(test_loader):
+        for test_features, actual_lb in tqdm(test_loader):
             prob=classifier.predict_proba(test_features)
             actual_lb=np.array(actual_lb)
             probs.append(prob)

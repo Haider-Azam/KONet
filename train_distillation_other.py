@@ -125,9 +125,9 @@ if __name__=='__main__':
     train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 
-    model_name='distiller'
+    model_name='distiller_mobilenet'
     large_model_name='denseOtherFinetuned'
-    small_model_name='conv_next'
+    small_model_name='mobilenet'
     #Large model initiallization
 
     if large_model_name=='denseOtherFinetuned':
@@ -149,6 +149,10 @@ if __name__=='__main__':
         small_model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=768,out_features=n_classes),
                                             )
+    elif small_model_name=='mobilenet':
+        small_model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+        small_model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+        
     model=distiller(large_model=large_model,small_model=small_model)
     #Freeze entirety of large model so only small model changes
     freeze=['large_model.*.weight']
@@ -195,3 +199,7 @@ if __name__=='__main__':
     #Load the pre-trained large model used for distilling
     classifier.module_.large_model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
     classifier.fit(train_set,y=None,epochs=40)
+    classifier.load_params(f_params=f'model/{model_name}_otherbest_param.pkl')
+
+    classifier.module_=classifier.module_.small_model
+    classifier.save_params(f_params=f'model/{small_model_name}_distilled_otherbest_param.pkl')
