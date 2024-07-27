@@ -61,7 +61,8 @@ class CustomImageFolder(torchvision.datasets.ImageFolder):
             classes, classes_to_idx=super().find_classes(directory)
         return classes, classes_to_idx
 
-def prep_dataset(path,image_shape=224,augmented_dataset_size=4000,new_map=None):
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000,new_map=None
+                 ,train_split=0.8,valid_split=0.1,test_split=0.1):
     global map
     #mapping=Lambda(lambda x: ToTensor(map[x.item()]))
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
@@ -89,9 +90,6 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000,new_map=None):
     
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
-    train_split=0.8
-    valid_split=0.1
-    test_split=0.1
     return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 

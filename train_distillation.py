@@ -4,15 +4,16 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-import skorch
-from skorch.helper import predefined_split
-from skorch.callbacks import Checkpoint,Freezer,EpochScoring
 from typing import Optional
 from torch import Tensor
 from torch.nn.modules.loss import _WeightedLoss
 from torch.nn import functional as F
 from sklearn.metrics import accuracy_score
+from tqdm import tqdm
+import numpy as np
 import warnings
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class KONet(torch.nn.Module):
 
@@ -65,13 +66,10 @@ class distiller(torch.nn.Module):
 
 #Now we need to create our own loss function which will perform cross entropy loss
 class distill_loss(_WeightedLoss):
-    __constants__ = ['ignore_index', 'reduction', 'label_smoothing']
-    ignore_index: int
-    label_smoothing: float
 
-    def __init__(self, weight: Optional[Tensor] = None, size_average=None, ignore_index: int = -100,
-                 reduce=None, reduction: str = 'mean', label_smoothing: float = 0.0, T:int = 2,
-                 soft_target_loss_weight: float = 0.25, ce_loss_weight: float = 0.75,) -> None:
+    def __init__(self, weight= None, size_average=None, ignore_index= -100,
+                 reduce=None, reduction= 'mean', label_smoothing= 0.0, T= 2,
+                 soft_target_loss_weight= 0.25, ce_loss_weight= 0.75,):
         super().__init__(weight, size_average, reduce, reduction)
         self.ignore_index = ignore_index
         self.label_smoothing = label_smoothing
@@ -79,24 +77,41 @@ class distill_loss(_WeightedLoss):
         self.soft_target_loss_weight=soft_target_loss_weight
         self.ce_loss_weight=ce_loss_weight
 
-    def forward(self, input: Tensor, target: Tensor) -> Tensor:
-        soft_targets = F.softmax(input[0] / self.T, dim=-1)
-        soft_prob = F.softmax(input[1] / self.T, dim=-1)
+    def forward(self, input, old_input, target):
+        soft_targets = F.softmax(old_input / self.T, dim=-1)
+        soft_prob = F.softmax(input / self.T, dim=-1)
         soft_targets_loss = -torch.sum(soft_targets * (soft_prob.log())) / soft_prob.size()[0] * (self.T**2)
-        #print(input[1])
-        label_loss = F.cross_entropy(input[1], target, weight=self.weight,
+        label_loss = F.cross_entropy(input, target, weight=self.weight,
                                ignore_index=self.ignore_index, reduction=self.reduction,
                                label_smoothing=self.label_smoothing)   
         loss = self.soft_target_loss_weight * soft_targets_loss + self.ce_loss_weight * label_loss
         return loss
     
-    
-if __name__=='__main__':
-    warnings.filterwarnings("ignore")
-    n_classes=2
-    image_shape=224
-    augmented_dataset_size=4000
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
+def test(model,dataloader,loss_fn):
+    model.eval()
+    loss=0
+    labels=[]
+    probabilities=[]
+    for data,label in tqdm(dataloader):
+        with torch.no_grad():
+            data , label=data.to(device) , label.to(device)
+
+            output=model(data)
+            #print(output.shape)
+            loss+=loss_fn(output , label)
+            prob=output.softmax(dim=1)
+            labels.append(label.detach().cpu().numpy())
+            probabilities.append(prob.detach().cpu().numpy())
+
+    labels=np.concatenate(labels,axis=0)
+    probabilities=np.concatenate(probabilities,axis=0)
+
+    loss=loss/len(dataloader)
+    return loss,labels,probabilities
+
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
+                 ,train_split=0.8,valid_split=0.1,test_split=0.1):
+
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
                         v2.Resize((image_shape,image_shape),antialias=True),
@@ -111,31 +126,44 @@ if __name__=='__main__':
                         ])
     non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
     dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
-    factor=augmented_dataset_size//len(dataset)-1
+    factor=augmented_dataset_size//len(dataset)
 
     new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
     del non_augmented_dataset,dataset
 
+    
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
-    train_split=0.8
-    valid_split=0.1
-    test_split=0.1
-    train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+
+    return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 
-    model_name='distiller_mobilenet'
+if __name__=='__main__':
+    warnings.filterwarnings("ignore")
+    n_classes=2
+    image_shape=224
+    augmented_dataset_size=4000
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
+    
+    train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
+    
+    train_dataloader = DataLoader(train_set, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+    
+    valid_dataloader = DataLoader(valid_set, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+
     large_model_name='dense'
     small_model_name='mobilenet'
     #Large model initiallization
 
-    if large_model_name=='dense':
+    if 'dense' in large_model_name:
         large_model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
         large_model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-    elif large_model_name=='KONet':
+    elif 'KONet' in large_model_name:
         m1_ratio=0.6
         m2_ratio=0.4
         m1_dropout=0.1
@@ -153,51 +181,57 @@ if __name__=='__main__':
         small_model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
         small_model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
-    model=distiller(large_model=large_model,small_model=small_model)
-    #Freeze entirety of large model so only small model changes
-    freeze=['large_model.*.weight']
-        
-    monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
-    cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}best_param.pkl',
-                  f_optimizer=None,f_history=None)
-    cb = skorch.callbacks.Freezer(freeze)
-    #Predict_proba only give first model output
-    def small_accuracy(net, ds, y=None):
-        # assume ds yields (X, y), e.g. torchvision.datasets.MNIST
-        y_true = [y for _, y in ds]
-        y_pred = net.predict(ds)[:,1]
-        return accuracy_score(y_true, y_pred)
-    small_callback=EpochScoring(
-                small_accuracy,
-                name='valid_small_acc',
-                lower_is_better=False,
-            )
-    classifier = skorch.NeuralNetClassifier(
-            model,
-            criterion=distill_loss(),
-            optimizer=torch.optim.AdamW,
-            optimizer__lr=0.0000625,
-            train_split=predefined_split(valid_set),
-            iterator_train=DataLoader,
-            iterator_valid=DataLoader,
-            iterator_train__shuffle=True,
-            iterator_train__pin_memory=True,
-            iterator_valid__pin_memory=True,
-            iterator_train__num_workers=4 ,
-            iterator_valid__num_workers=4,
-            iterator_train__persistent_workers=True,
-            iterator_valid__persistent_workers=True,
-            batch_size=8,
-            classes=[0,1],
-            device='cuda',
-            callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
-            warm_start=True,
-            )
-    classifier.initialize()
     #Load the pre-trained large model used for distilling
-    classifier.module_.large_model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
-    classifier.fit(train_set,y=None,epochs=40)
-    classifier.load_params(f_params=f'model/{model_name}best_param.pkl')
+    large_model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
+    for name,param in large_model.named_parameters():
+        param.requires_grad=False
+    
+    large_model.to(device)
+    small_model.to(device)
 
-    classifier.module_=classifier.module_.small_model
-    classifier.save_params(f_params=f'model/{small_model_name}_distilledbest_param.pkl')
+    loss_fn=distill_loss()
+    test_loss_fn=torch.nn.CrossEntropyLoss()
+    optimizer=torch.optim.AdamW(small_model.parameters(),lr=0.0000625)
+
+    optimizer.zero_grad()
+
+    epochs=40
+    best_test_acc=0
+    for i in range(epochs):
+        print('Training')
+        small_model.train()
+        large_model.train()
+        total_loss=0
+        for train_data,train_label in tqdm(train_dataloader):
+            
+            train_data , train_label=train_data.to(device) , train_label.to(device)
+
+            #Zero the gradient for every batch for mini-batch gradient descent
+            optimizer.zero_grad()
+
+            old_output=large_model(train_data)
+            output=small_model(train_data)
+
+            loss=loss_fn(output, old_output, train_label)
+
+            total_loss+=loss.item()
+
+            loss.backward()
+            optimizer.step()
+
+        print('Testing on first dataset')
+        small_model.eval()
+
+        test_loss,labels,probabilities=test(small_model,valid_dataloader,test_loss_fn)
+        pred_labels=np.argmax(probabilities,axis=1)
+        test_acc=np.mean(pred_labels==labels)
+
+        total_loss=total_loss/(len(train_dataloader))
+
+        print('Train Epoch:',i+1,'loss:',total_loss)
+        print('test loss1:',test_loss.item(),'test accuracy1:',test_acc)
+
+        if best_test_acc<test_acc:
+            best_test_acc=test_acc
+            print('Loss improved, saving weights')
+            torch.save(small_model.state_dict(),f'model/{small_model_name}_distilledbest_param.pkl')

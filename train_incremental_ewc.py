@@ -55,7 +55,8 @@ class KONet(torch.nn.Module):
         return out
 
 
-def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
+                 ,train_split=0.8,valid_split=0.1,test_split=0.1):
 
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
@@ -78,9 +79,6 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
 
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
-    train_split=0.8
-    valid_split=0.1
-    test_split=0.1
     return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
 

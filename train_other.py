@@ -4,10 +4,11 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-import skorch
-from skorch.helper import predefined_split
-from skorch.callbacks import Checkpoint,Freezer
+import numpy as np
+from tqdm import tqdm
 import warnings
+
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class KONet(torch.nn.Module):
 
@@ -41,18 +42,36 @@ class KONet(torch.nn.Module):
         m2=self.dense(x)
         out=self.m1_ratio*m1+self.m2_ratio*m2
         return out
-if __name__=='__main__':
-    warnings.filterwarnings("ignore")
-    n_classes=2
-    image_shape=224
-    augmented_dataset_size=4000
     
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+def test(model,dataloader,loss_fn):
+    model.eval()
+    loss=0
+    labels=[]
+    probabilities=[]
+    for data,label in tqdm(dataloader):
+        with torch.no_grad():
+            data , label=data.to(device) , label.to(device)
+
+            output=model(data)
+            loss+=loss_fn(output , label)
+            prob=output.softmax(dim=1)
+            labels.append(label.detach().cpu().numpy())
+            probabilities.append(prob.detach().cpu().numpy())
+
+    labels=np.concatenate(labels,axis=0)
+    probabilities=np.concatenate(probabilities,axis=0)
+
+    loss=loss/len(dataloader)
+    return loss,labels,probabilities
+
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
+                 ,train_split=0.8,valid_split=0.1,test_split=0.1):
+
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
-                       v2.ToDtype(torch.float32),
-                       v2.Resize((image_shape,image_shape),antialias=True),
-                       v2.Normalize(mean=[0],std=[1]),
-                       ])
+                        v2.ToDtype(torch.float32),
+                        v2.Resize((image_shape,image_shape),antialias=True),
+                        v2.Normalize(mean=[0],std=[1]),
+                        ])
     transforms=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
                         v2.RandomAffine(degrees=30,shear=30),
@@ -63,15 +82,32 @@ if __name__=='__main__':
     non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
     dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     factor=augmented_dataset_size//len(dataset)
+
     new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
     del non_augmented_dataset,dataset
 
+    
+    #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
-    train_split=0.8
-    valid_split=0.1
-    test_split=0.1
-    train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+
+    return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
                                                                 generator=generator1)
+
+if __name__=='__main__':
+    warnings.filterwarnings("ignore")
+    n_classes=2
+    image_shape=224
+    augmented_dataset_size=4000
+    
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    
+    train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
+    
+    train_dataloader = DataLoader(train_set, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+    
+    valid_dataloader = DataLoader(valid_set, batch_size=8, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
 
     freeze=[]
     model_name='mobilenet'
@@ -135,28 +171,50 @@ if __name__=='__main__':
 
 
         monitor = lambda net: any(net.history[-1, ('valid_accuracy_best','valid_loss_best')])
-    cp=Checkpoint(monitor='valid_loss_best',dirname='model',f_params=f'{model_name}_otherbest_param.pkl',
-                  f_optimizer=None,f_history=None)
-    cb = skorch.callbacks.Freezer(freeze)
-    classifier = skorch.NeuralNetClassifier(
-            model,
-            criterion=torch.nn.CrossEntropyLoss(),
-            optimizer=torch.optim.AdamW,
-            train_split=predefined_split(valid_set),
-            iterator_train=DataLoader,
-            iterator_valid=DataLoader,
-            iterator_train__shuffle=True,
-            iterator_train__pin_memory=True,
-            iterator_valid__pin_memory=True,
-            iterator_train__num_workers=4 ,
-            iterator_valid__num_workers=4,
-            iterator_train__persistent_workers=True,
-            iterator_valid__persistent_workers=True,
-            batch_size=8,
-            classes=[0,1],
-            device='cuda',
-            callbacks=[cp,cb,skorch.callbacks.ProgressBar()],#Try to implement accuracy and f1 score callables here
-            warm_start=True,
-            )
+        
+    model.to(device)
+    optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
 
-    classifier.fit(train_set,y=None,epochs=40)
+    model.train()
+    optimizer.zero_grad()
+    loss_fn=torch.nn.CrossEntropyLoss()
+
+    epochs=40
+
+    best_test_acc=0
+    for i in range(epochs):
+        print('Training')
+        model.train()
+        total_loss=0
+        for train_data,train_label in tqdm(train_dataloader):
+            
+            train_data , train_label=train_data.to(device) , train_label.to(device)
+
+            #Zero the gradient for every batch for mini-batch gradient descent
+            optimizer.zero_grad()
+
+            output=model(train_data)
+
+            loss=loss_fn(output , train_label)
+
+            total_loss+=loss.item()
+
+            loss.backward()
+            optimizer.step()
+
+        print('Testing on first dataset')
+        model.eval()
+
+        test_loss,labels,probabilities=test(model,valid_dataloader,loss_fn)
+        pred_labels=np.argmax(probabilities,axis=1)
+        test_acc=np.mean(pred_labels==labels)
+
+        total_loss=total_loss/(len(train_dataloader))
+
+        print('Train Epoch:',i+1,'loss:',total_loss)
+        print('test loss1:',test_loss.item(),'test accuracy1:',test_acc)
+
+        if best_test_acc<test_acc:
+            best_test_acc=test_acc
+            print('Loss improved, saving weights')
+            torch.save(model.state_dict(),f'model/{model_name}_otherbest_param.pkl') 
