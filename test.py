@@ -9,7 +9,8 @@ from skorch.helper import predefined_split
 from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
 from tqdm import tqdm
-from sklearn.metrics import roc_auc_score,f1_score
+from sklearn.metrics import roc_auc_score,f1_score, ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 import warnings
 
 class KONet(torch.nn.Module):
@@ -143,6 +144,9 @@ if __name__=='__main__':
     f1=[]
     auc=[]
     test_loader=DataLoader(test_set,batch_size=8,shuffle=False)
+
+    true_labels=[]
+    predicted_labels=[]
     for _ in range(iterations):
         probs=[]
         actual_labels=[]
@@ -160,6 +164,9 @@ if __name__=='__main__':
         iteration_accuracy=np.mean(pred_labels==actual_labels)
         iteration_f1=f1_score(actual_labels,pred_labels)
 
+        true_labels.extend(actual_labels)
+        predicted_labels.extend(pred_labels)
+
         accuracy.append(iteration_accuracy)
         f1.append(iteration_f1)
         auc.append(iteration_auc)
@@ -169,3 +176,7 @@ if __name__=='__main__':
     print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
+
+    ConfusionMatrixDisplay.from_predictions(true_labels,predicted_labels,display_labels=['normal','osteoporosis']
+                                            ,normalize='all')
+    plt.show()

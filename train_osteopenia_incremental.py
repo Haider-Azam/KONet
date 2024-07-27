@@ -160,9 +160,6 @@ def distillation_loss(new_logits,old_logits,T=2):
 	# print('OUT: ', outputs)
 	return outputs
 
-def replace_head(model,n_new_classes):
-    old_head=copy.deepcopy(list(model.parameters())[-1])
-    in_features=old_head.in_features
 
 if __name__=='__main__':
     

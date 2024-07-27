@@ -11,7 +11,8 @@ import skorch
 from skorch.helper import predefined_split
 from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
-from sklearn.metrics import roc_auc_score,f1_score
+from sklearn.metrics import roc_auc_score,f1_score,ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 import warnings
 from tqdm import tqdm
 
@@ -163,3 +164,7 @@ if __name__=='__main__':
     print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
+
+
+    ConfusionMatrixDisplay.from_predictions(actual_labels,pred_labels,display_labels=['normal','osteoporosis'],normalize='all')
+    plt.show()

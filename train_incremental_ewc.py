@@ -106,7 +106,17 @@ def ewc_init(ewc_model,dataloader,loss_fn):
         fisher_dict[name].requires_grad=False
 
     return ewc_model,optpar_dict,fisher_dict
-        
+
+def ewc_loss(ewc_model,optpar_dict,fisher_dict,ewc_lambda=8):
+    distill_loss=0
+    for name , param in ewc_model.named_parameters():
+        if 'classifier' in name:
+            optpar = optpar_dict[name]
+            fisher = fisher_dict[name]
+
+            distill_loss+= (fisher * (optpar - param).pow(2)).sum() * ewc_lambda
+    return distill_loss
+ 
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
@@ -214,13 +224,7 @@ if __name__=='__main__':
 
             loss=loss_fn(output , train_label)
 
-            distill_loss=0
-            for name , param in model.named_parameters():
-                optpar = optpar_dict[name]
-                fisher = fisher_dict[name]
-
-                distill_loss+= (fisher * (optpar - param).pow(2)).sum() * ewc_lambda
-            #print(distill_loss)
+            distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
             loss+=distill_loss
 
             total_loss+=loss

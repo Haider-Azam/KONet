@@ -6,7 +6,8 @@ from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet1
 from torch.utils.data import DataLoader
 from copy import deepcopy
 from torch.nn import functional as F
-from sklearn.metrics import accuracy_score,roc_auc_score,f1_score
+from sklearn.metrics import accuracy_score,roc_auc_score,f1_score,ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
 import warnings
 from tqdm import tqdm
 import numpy as np
@@ -114,7 +115,6 @@ if __name__=='__main__':
 
     new_n_classes=3
 
-
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
     model_name='mobilenet_distilled_incremental_lwf_3_class'
@@ -155,6 +155,7 @@ if __name__=='__main__':
     accuracy=[]
     f1=[]
     auc=[]
+
     for i in range(iterations):
         model.eval()
     
@@ -171,3 +172,7 @@ if __name__=='__main__':
     print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
+
+    ConfusionMatrixDisplay.from_predictions(labels,pred_labels,display_labels=['normal','osteopenia','osteoporosis']
+                                            ,normalize='all')
+    plt.show()
