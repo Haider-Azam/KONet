@@ -110,8 +110,8 @@ if __name__=='__main__':
     train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='mobilenet_distilled_incremental'
-    large_model_name='mobilenet'
+    model_name='conv_next_distilled_incremental_noewc'
+    large_model_name='conv_next'
     #Large model initiallization
 
     if large_model_name=='dense':

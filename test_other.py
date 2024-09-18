@@ -165,8 +165,8 @@ if __name__=='__main__':
     
         _,labels,probabilities=test(model,test_dataloader2,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
-        iteration_auc=roc_auc_score(labels,probabilities,average='weighted',multi_class='ovr')
-        iteration_accuracy=np.mean(pred_labels[labels==1]==labels[labels==1])
+        iteration_auc=roc_auc_score(labels,probabilities[:,1])
+        iteration_accuracy=np.mean(pred_labels==labels)
         iteration_f1=f1_score(labels,pred_labels,average='weighted')
 
         accuracy.append(iteration_accuracy)

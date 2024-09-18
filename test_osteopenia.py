@@ -111,12 +111,10 @@ if __name__=='__main__':
 
     path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
 
-    new_n_classes=3
-
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='mobilenet_distilled_incremental_lwf_3_class'
-    large_model_name='mobilenet'
+    model_name='conv_next_distilled_incremental_lwf_3_class_onlylwf'
+    large_model_name='conv_next'
     #Large model initiallization
 
     if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
@@ -160,7 +158,7 @@ if __name__=='__main__':
         _,labels,probabilities=test(model,test_dataloader2,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
         iteration_auc=roc_auc_score(labels,probabilities,average='weighted',multi_class='ovr')
-        iteration_accuracy=np.mean(pred_labels[labels==1]==labels[labels==1])
+        iteration_accuracy=np.mean(pred_labels==labels)
         iteration_f1=f1_score(labels,pred_labels,average='weighted')
 
         accuracy.append(iteration_accuracy)

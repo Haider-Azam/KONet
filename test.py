@@ -110,7 +110,7 @@ if __name__=='__main__':
     train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
 
 
-    model_name='mobilenet_distilled'
+    model_name='KONet'
     print('Model: ',model_name)
     #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
     #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -167,8 +167,8 @@ if __name__=='__main__':
     
         _,labels,probabilities=test(model,test_dataloader2,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
-        iteration_auc=roc_auc_score(labels,probabilities,average='weighted',multi_class='ovr')
-        iteration_accuracy=np.mean(pred_labels[labels==1]==labels[labels==1])
+        iteration_auc=roc_auc_score(labels,probabilities[:,1])
+        iteration_accuracy=np.mean(pred_labels==labels)
         iteration_f1=f1_score(labels,pred_labels,average='weighted')
 
         accuracy.append(iteration_accuracy)

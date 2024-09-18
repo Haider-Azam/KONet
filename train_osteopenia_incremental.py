@@ -149,14 +149,15 @@ def test(model,dataloader,loss_fn):
     return loss,labels,probabilities
 
 def distillation_loss(new_logits,old_logits,T=2):
-	outputs = torch.log_softmax(new_logits/T, dim=1)   # compute the log of softmax values
-	labels = torch.softmax(old_logits/T, dim=1)
-	# print('outputs: ', outputs)
-	# print('labels: ', labels.shape)
-	outputs = torch.sum(outputs * labels, dim=1, keepdim=False)
-	outputs = -torch.mean(outputs, dim=0, keepdim=False)
-	# print('OUT: ', outputs)
-	return outputs
+    outputs=new_logits
+	#outputs = torch.log_softmax(new_logits/T, dim=1)   # compute the log of softmax values
+    labels = torch.softmax(old_logits/T, dim=1)
+    # print('outputs: ', outputs)
+    # print('labels: ', labels.shape)
+    outputs = torch.sum(outputs * labels, dim=1, keepdim=False)
+    outputs = -torch.mean(outputs, dim=0, keepdim=False)
+    # print('OUT: ', outputs)
+    return outputs
 
 
 if __name__=='__main__':
@@ -191,14 +192,14 @@ if __name__=='__main__':
                                    persistent_workers=True, shuffle=True)
     
     
-    model_name='mobilenet_distilled_incremental_lwf_3_class'
-    large_model_name='mobilenet_distilled_other'
+    model_name='dense_incremental_lwf_3_class'
+    large_model_name='denseOtherFinetuned'
     #Large model initiallization
 
     if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
-        in_features=model.classifier[1].in_features
+        in_features=model.classifier.in_features
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=in_features,out_features=n_classes),
                                             )
@@ -224,7 +225,19 @@ if __name__=='__main__':
     for name,param in old_model.named_parameters():
         param.requires_grad=False
 
-    if 'conv_next' in large_model_name :
+    if 'dense' in large_model_name :
+        old_classifier=model.classifier.state_dict()
+
+        model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=in_features,out_features=new_n_classes),
+                                                )
+        
+        #For later generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
+        with torch.no_grad():
+            for name,param in model.classifier.named_parameters():
+                param[[0,2]]=old_classifier[name]
+
+    elif 'conv_next' in large_model_name :
         old_classifier=model.classifier[2].state_dict()
 
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
@@ -235,10 +248,6 @@ if __name__=='__main__':
         with torch.no_grad():
             for name,param in model.classifier[2].named_parameters():
                 param[[0,2]]=old_classifier[name]
-                #if 'weight' in name:
-                #    param[1]=0
-                #elif 'bias' in name:
-                #    param[1]=-3
 
     elif 'mobilenet' in large_model_name:
         old_classifier=model.classifier[3].state_dict()
@@ -249,10 +258,6 @@ if __name__=='__main__':
         with torch.no_grad():
             for name,param in model.classifier[3].named_parameters():
                 param[[0,2]]=old_classifier[name]
-                #if 'weight' in name:
-                #    param[1]=0
-                #elif 'bias' in name:
-                #    param[1]=-3
 
     model.to(device)
     old_model.to(device)
@@ -273,8 +278,9 @@ if __name__=='__main__':
     pred_labels=np.argmax(probabilities,axis=1)
     accuracy1=np.mean(pred_labels==labels)
     print('binary class accuracy',accuracy1)
-    ewc_lambda=2
+    ewc_lambda=1
     epochs=30
+    T=2
 
     print('Training on second dataset')
     best_test_acc=0
@@ -295,10 +301,10 @@ if __name__=='__main__':
             #Get probabilities from old model and corresponding probabilities from new model
             old_output=old_model(train_data)
             new_output=output[:,[0,2]]
-            
+            new_output=torch.log_softmax(output/T, dim=1)[:,[0,2]]
             distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
 
-            distill_loss+=distillation_loss(new_output,old_output)
+            distill_loss+=distillation_loss(new_output,old_output,T=T)
             
             loss+=distill_loss
 
@@ -309,7 +315,7 @@ if __name__=='__main__':
 
         print('Testing on 3 class dataset valid split')
         model.eval()
-        print('distill loss:',distill_loss)
+        #print('distill loss:',distill_loss)
         loss1,labels,probabilities=test(model,valid_dataloader3,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
         accuracy_binary=np.mean(pred_labels[labels!=1]==labels[labels!=1])
