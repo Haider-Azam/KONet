@@ -11,10 +11,10 @@ from torch.nn import functional as F
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 import numpy as np
-import matplotlib.pyplot as plt 
-import random
-import os 
+import matplotlib.pyplot as plt  
 import warnings
+import random
+import os
 from sklearn.model_selection import KFold
 import csv
 script_name = os.path.basename(__file__)
@@ -92,7 +92,7 @@ class distill_loss(_WeightedLoss):
                                label_smoothing=self.label_smoothing)   
         loss = self.soft_target_loss_weight * soft_targets_loss + self.ce_loss_weight * label_loss
         return label_loss, loss
-    
+
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
@@ -113,7 +113,7 @@ def test(model,dataloader,loss_fn):
     probabilities=np.concatenate(probabilities,axis=0)
 
     loss=loss/len(dataloader)
-    return loss.item(),labels,probabilities
+    return loss.item(),labels,probabilities 
 
 def set_random_seed(seed: int = 2222, deterministic: bool = False):
         """Set seeds"""
@@ -124,6 +124,7 @@ def set_random_seed(seed: int = 2222, deterministic: bool = False):
         torch.cuda.manual_seed(seed)  # type: ignore
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = deterministic  # type: ignore
+
     
 def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
                  ,train_split=0.8,valid_split=0.1,test_split=0.1):
@@ -155,7 +156,7 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
     #                                                            generator=generator1)
     return torch.utils.data.random_split(new_dataset, [train_split+valid_split,test_split],
                                                                 generator=generator1)
-
+   
 if __name__=='__main__':
     warnings.filterwarnings("ignore")
     n_classes=2
@@ -163,10 +164,15 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
-    
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+
     set_random_seed(seed)
     
+    # train_split=0.2
+    # valid_split=0.1
+    # test_split=0.7
+    # train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size
+    #                                           ,train_split,valid_split,test_split)
     #train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
     dataset,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
 
@@ -185,7 +191,7 @@ if __name__=='__main__':
         
         valid_dataloader = DataLoader(valid_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                     persistent_workers=True, shuffle=True)
-
+        
         large_model_name='dense'
         small_model_name='mobilenet'
         #Large model initiallization
@@ -209,13 +215,12 @@ if __name__=='__main__':
             small_model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                                 torch.nn.Linear(in_features=768,out_features=n_classes),
                                                 )
-            
         elif small_model_name=='mobilenet':
             small_model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
             small_model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
         #Load the pre-trained large model used for distilling
-        large_model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
+        large_model.load_state_dict(torch.load(f'model/{large_model_name}OtherFinetunedbest_param.pkl'))
         for name,param in large_model.named_parameters():
             param.requires_grad=False
         
@@ -280,7 +285,7 @@ if __name__=='__main__':
             if best_test_acc<test_acc:
                 best_test_acc=test_acc
                 print('Loss improved, saving weights')
-                torch.save(small_model.state_dict(),f'model/{small_model_name}_distilledbest_param.pkl')
+                torch.save(small_model.state_dict(),f'model/{small_model_name}_distilledOtherFinetunedbest_param.pkl')
             loss_results.append((total_label_loss,test_loss))
             acc_results.append((total_acc,test_acc))
 

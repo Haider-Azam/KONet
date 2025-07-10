@@ -8,6 +8,8 @@ from copy import deepcopy
 from torch.nn import functional as F
 from sklearn.metrics import accuracy_score
 import warnings
+import random
+import os
 from tqdm import tqdm
 import numpy as np
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -61,6 +63,17 @@ class CustomImageFolder(torchvision.datasets.ImageFolder):
             classes, classes_to_idx=super().find_classes(directory)
         return classes, classes_to_idx
 
+def set_random_seed(seed: int = 2222, deterministic: bool = False):
+        """Set seeds"""
+        random.seed(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)  # type: ignore
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = deterministic  # type: ignore
+
+    
 def prep_dataset(path,image_shape=224,augmented_dataset_size=4000,new_map=None
                  ,train_split=0.8,valid_split=0.1,test_split=0.1):
     global map
@@ -166,7 +179,8 @@ if __name__=='__main__':
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
-
+    batch_size=4
+    seed=42
     path1='D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray'
     path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray only osteopenia"
     path3="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
@@ -175,20 +189,22 @@ if __name__=='__main__':
     map1={'normal':0,'osteoporosis':2}
     map2={'osteopenia':1}
     
+    set_random_seed(seed)
+    
     train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size,map1)
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size,map2)
     train_set3,valid_set3,test_set3=prep_dataset(path3,image_shape,augmented_dataset_size)
 
-    train_dataloader1 = DataLoader(train_set1, batch_size=8, num_workers=4, pin_memory=True,
+    train_dataloader1 = DataLoader(train_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
-    train_dataloader2 = DataLoader(train_set2, batch_size=8, num_workers=4, pin_memory=True,
+    train_dataloader2 = DataLoader(train_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
-    valid_dataloader1 = DataLoader(valid_set1, batch_size=8, num_workers=4, pin_memory=True,
+    valid_dataloader1 = DataLoader(valid_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
-    valid_dataloader3 = DataLoader(valid_set3, batch_size=8, num_workers=4, pin_memory=True,
+    valid_dataloader3 = DataLoader(valid_set3, batch_size=batch_size, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
     
@@ -263,7 +279,7 @@ if __name__=='__main__':
     old_model.to(device)
 
     loss_fn=torch.nn.CrossEntropyLoss()
-    optimizer=torch.optim.SGD(model.parameters(),lr=0.00002,momentum=0.9, weight_decay=5e-4)
+    optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
     print('Extracting first dataset gradients')
     model,optpar_dict,fisher_dict=ewc_init(model,train_dataloader1,loss_fn,optimizer)
 
@@ -279,7 +295,7 @@ if __name__=='__main__':
     accuracy1=np.mean(pred_labels==labels)
     print('binary class accuracy',accuracy1)
     ewc_lambda=1
-    epochs=30
+    epochs=20
     T=2
 
     print('Training on second dataset')

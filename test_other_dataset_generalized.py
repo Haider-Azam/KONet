@@ -7,15 +7,14 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-import skorch
-from skorch.helper import predefined_split
-from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
 from sklearn.metrics import roc_auc_score,f1_score,ConfusionMatrixDisplay
 import matplotlib.pyplot as plt
+import random
+import os
 import warnings
 from tqdm import tqdm
-
+from sklearn.model_selection import KFold
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class KONet(torch.nn.Module):
@@ -73,18 +72,31 @@ def test(model,dataloader,loss_fn):
     loss=loss/len(dataloader)
     return loss,labels,probabilities
 
+def set_random_seed(seed: int = 2222, deterministic: bool = False):
+        """Set seeds"""
+        random.seed(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)  # type: ignore
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = deterministic  # type: ignore
+
 if __name__=='__main__':
     warnings.filterwarnings("ignore")
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
-    
+    batch_size=4
+    seed=42
     path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                        v2.ToDtype(torch.float32),
                        v2.Resize((image_shape,image_shape),antialias=True),
                        v2.Normalize(mean=[0],std=[1]),
                        ])
+
+    set_random_seed(seed)
 
     non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
 
@@ -132,23 +144,26 @@ if __name__=='__main__':
 
     loss_fn=torch.nn.CrossEntropyLoss()
     
-    test_dataloader2 = DataLoader(test_set, batch_size=8, num_workers=4, pin_memory=True,
+    test_dataloader2 = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                    persistent_workers=True, shuffle=True)
     
     iterations=5
     accuracy=[]
     f1=[]
     auc=[]
-
+    labels=[]
+    pred_labels=[]
     for i in range(iterations):
         model.eval()
     
-        _,labels,probabilities=test(model,test_dataloader2,loss_fn)
-        pred_labels=np.argmax(probabilities,axis=1)
-        iteration_auc=roc_auc_score(labels,probabilities[:,1])
-        iteration_accuracy=np.mean(pred_labels==labels)
-        iteration_f1=f1_score(labels,pred_labels,average='weighted')
+        _,iteration_labels,probabilities=test(model,test_dataloader2,loss_fn)
+        pred_iteration_labels=np.argmax(probabilities,axis=1)
+        iteration_auc=roc_auc_score(iteration_labels,probabilities[:,1])
+        iteration_accuracy=np.mean(pred_iteration_labels==iteration_labels)
+        iteration_f1=f1_score(iteration_labels,pred_iteration_labels,average='weighted')
 
+        labels.append(iteration_labels)
+        pred_labels.append(pred_iteration_labels)
         accuracy.append(iteration_accuracy)
         f1.append(iteration_f1)
         auc.append(iteration_auc)
@@ -157,6 +172,8 @@ if __name__=='__main__':
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
 
-    ConfusionMatrixDisplay.from_predictions(labels,pred_labels,display_labels=['normal','osteopenia','osteoporosis']
+    labels=np.concatenate(labels,axis=0)
+    pred_labels=np.concatenate(pred_labels,axis=0)
+    ConfusionMatrixDisplay.from_predictions(labels,pred_labels,display_labels=['normal','osteoporosis']
                                             ,normalize='all')
     plt.show()

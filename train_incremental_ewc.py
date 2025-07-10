@@ -8,8 +8,12 @@ from copy import deepcopy
 from torch.nn import functional as F
 from sklearn.metrics import accuracy_score
 import warnings
+import random
+import os
+import matplotlib.pyplot as plt  
 from tqdm import tqdm
 import numpy as np
+from sklearn.model_selection import KFold
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #Only give first model output
@@ -54,6 +58,15 @@ class KONet(torch.nn.Module):
         out=self.m1_ratio*m1+self.m2_ratio*m2
         return out
 
+def set_random_seed(seed: int = 2222, deterministic: bool = False):
+        """Set seeds"""
+        random.seed(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)  # type: ignore
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = deterministic  # type: ignore
 
 def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
                  ,train_split=0.8,valid_split=0.1,test_split=0.1):
@@ -61,25 +74,29 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
                         v2.Resize((image_shape,image_shape),antialias=True),
-                        v2.Normalize(mean=[0],std=[1]),
+                        v2.Normalize(mean=[0.5], std=[0.5]),
                         ])
     transforms=v2.Compose([v2.ToImageTensor(),
                         v2.ToDtype(torch.float32),
                         v2.RandomAffine(degrees=30,shear=30),
                         v2.RandomZoomOut(side_range=(1,1.5)),
                         v2.Resize((image_shape,image_shape),antialias=True),
-                        v2.Normalize(mean=[0],std=[1]),
+                        v2.Normalize(mean=[0.5], std=[0.5]),
                         ])
     non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
     dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
-    factor=augmented_dataset_size//len(dataset)-1
+    factor=augmented_dataset_size//len(dataset)
 
     new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
     del non_augmented_dataset,dataset
 
+    
     #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
     generator1 = torch.Generator().manual_seed(42)
-    return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+
+    #return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+    #                                                            generator=generator1)
+    return torch.utils.data.random_split(new_dataset, [train_split+valid_split,test_split],
                                                                 generator=generator1)
 
 def ewc_init(ewc_model,dataloader,loss_fn):
@@ -135,7 +152,7 @@ def test(model,dataloader,loss_fn):
     probabilities=np.concatenate(probabilities,axis=0)
 
     loss=loss/len(dataloader)
-    return loss,labels,probabilities
+    return loss.item(),labels,probabilities
 
 if __name__=='__main__':
     
@@ -143,26 +160,30 @@ if __name__=='__main__':
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
+    batch_size=4
+    seed=42
     path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
     path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    
+    set_random_seed(seed)
     
     train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
     train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    train_dataloader1 = DataLoader(train_set1, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
+    train_dataloader1 = DataLoader(train_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                   shuffle=True)
     
-    train_dataloader2 = DataLoader(train_set2, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
+    train_dataloader2 = DataLoader(train_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                   shuffle=True)
     
-    valid_dataloader1 = DataLoader(valid_set1, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
+    valid_dataloader1 = DataLoader(valid_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                   shuffle=True)
     
-    valid_dataloader2 = DataLoader(valid_set2, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
+    valid_dataloader2 = DataLoader(valid_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                   shuffle=True)
     
-    model_name='mobilenet_distilled_incremental'
-    large_model_name='mobilenet_distilled'
+    model_name='conv_next_incremental'
+    large_model_name='conv_next'
     #Large model initiallization
 
     if large_model_name=='dense':
@@ -202,8 +223,10 @@ if __name__=='__main__':
 
     print('Saving first dataset gradients and parameters')
     model,optpar_dict,fisher_dict=ewc_init(model,train_dataloader1,loss_fn)
-    epochs=30
-    ewc_lambda=8
+    epochs=20
+    ewc_lambda=16
+    loss_results = []
+    acc_results = []
 
     print('Training on second dataset')
     best_test_acc=0
@@ -211,6 +234,7 @@ if __name__=='__main__':
         print('Training')
         model.train()
         total_loss=0
+        total_acc=0
         for train_data,train_label in tqdm(train_dataloader2):
             
             train_data , train_label=train_data.to(device) , train_label.to(device)
@@ -220,12 +244,17 @@ if __name__=='__main__':
 
             output=model(train_data)
 
+            train_pred = output.softmax(dim=1).argmax(dim=1).detach().cpu().numpy()
+            train_label_np = train_label.detach().cpu().numpy()
+
+            total_acc+= np.mean(train_pred==train_label_np)
+
             loss=loss_fn(output , train_label)
 
             distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
             loss+=distill_loss
 
-            total_loss+=loss
+            total_loss+=loss.item()
             #print('distill loss:',distill_loss)
             #print('total loss:',loss)
             loss.backward()
@@ -246,17 +275,30 @@ if __name__=='__main__':
         accuracy2=np.mean(pred_labels==labels)
 
         total_loss=total_loss/(len(train_dataloader2))
+        total_acc=total_acc/(len(train_dataloader2))
         test_acc1=np.mean(accuracy1)
         test_acc2=np.mean(accuracy2)
-        print('Train Epoch:',i+1,'loss:',total_loss.item())
-        print('test loss1:',loss1.item(),'test accuracy1:',test_acc1,
-              'test loss2:',loss2.item(),'test accuracy2:',test_acc2)
+        print('Train Epoch:',i+1,'loss:',total_loss)
+        print('test loss1:',loss1,'test accuracy1:',test_acc1,
+              'test loss2:',loss2,'test accuracy2:',test_acc2)
 
         harmonic_acc=2*test_acc1*test_acc2/(test_acc1+test_acc2)
         if best_test_acc<harmonic_acc:
             best_test_acc=harmonic_acc
             print('Loss improved, saving weights')
             torch.save(model.state_dict(),f'model/{model_name}best_param.pkl') 
-    #loss,accuracy=test(model,test_dataloader2,loss_fn)
-    #print('loss:',loss,'\nAccuracy:',accuracy)
-    #torch.save(model.state_dict(),f'model/{model_name}_param.pkl')
+        loss_results.append((total_loss,loss1,loss2))
+        acc_results.append((total_acc,test_acc1,test_acc2))
+    plt.plot(loss_results)
+    plt.xlabel("Epochs")
+    plt.ylabel("Cross Entropy loss")
+    plt.legend(['train loss','dataset 1 valid loss','dataset 2a valid loss'])
+    plt.title(f'{model_name} loss')
+    plt.show()
+
+    plt.plot(acc_results)
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy")
+    plt.legend(['train accuracy','dataset 1 valid accuracy','dataset 2a valid accuracy'])
+    plt.title(f'{model_name} accuracy')
+    plt.show()
