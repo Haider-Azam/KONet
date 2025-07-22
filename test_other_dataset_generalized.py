@@ -7,13 +7,15 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-import skorch
-from skorch.helper import predefined_split
-from skorch.callbacks import Checkpoint,Freezer
 import numpy as np
-from sklearn.metrics import roc_auc_score,f1_score
+from sklearn.metrics import roc_auc_score,f1_score,ConfusionMatrixDisplay
+import matplotlib.pyplot as plt
+import random
+import os
 import warnings
 from tqdm import tqdm
+from sklearn.model_selection import KFold
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class KONet(torch.nn.Module):
 
@@ -47,31 +49,60 @@ class KONet(torch.nn.Module):
         m2=self.dense(x)
         out=self.m1_ratio*m1+self.m2_ratio*m2
         return out
+
+def test(model,dataloader,loss_fn):
+    model.eval()
+    loss=0
+    labels=[]
+    probabilities=[]
+    for data,label in tqdm(dataloader):
+        with torch.no_grad():
+            data , label=data.to(device) , label.to(device)
+
+            output=model(data)
+            #print(output.shape)
+            loss+=loss_fn(output , label)
+            prob=output.softmax(dim=1)
+            labels.append(label.detach().cpu().numpy())
+            probabilities.append(prob.detach().cpu().numpy())
+
+    labels=np.concatenate(labels,axis=0)
+    probabilities=np.concatenate(probabilities,axis=0)
+
+    loss=loss/len(dataloader)
+    return loss,labels,probabilities
+
+def set_random_seed(seed: int = 2222, deterministic: bool = False):
+        """Set seeds"""
+        random.seed(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)  # type: ignore
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = deterministic  # type: ignore
+
 if __name__=='__main__':
     warnings.filterwarnings("ignore")
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
-    
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    batch_size=4
+    seed=42
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
     non_augment_transform=v2.Compose([v2.ToImageTensor(),
                        v2.ToDtype(torch.float32),
                        v2.Resize((image_shape,image_shape),antialias=True),
                        v2.Normalize(mean=[0],std=[1]),
                        ])
-    transforms=v2.Compose([v2.ToImageTensor(),
-                        v2.ToDtype(torch.float32),
-                        v2.RandomAffine(degrees=30,shear=30),
-                        v2.RandomZoomOut(side_range=(1,1.5)),
-                        v2.Resize((image_shape,image_shape),antialias=True),
-                        v2.Normalize(mean=[0],std=[1]),
-                        ])
-    non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
-    dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
-    factor=augmented_dataset_size//len(dataset)
-    test_set=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
-    del non_augmented_dataset,dataset
 
+    set_random_seed(seed)
+
+    non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
+
+    factor=augmented_dataset_size//len(non_augmented_dataset)
+    test_set=torch.utils.data.ConcatDataset([non_augmented_dataset]+[non_augmented_dataset for _ in range(factor)])
+    del non_augmented_dataset
     #generator1 = torch.Generator().manual_seed(42)
     #train_set,valid_set,test_set=torch.utils.data.random_split(new_dataset, [0.8,0.1,0.1], generator=generator1)
 
@@ -93,7 +124,7 @@ if __name__=='__main__':
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
     
-    elif model_name=='conv_next' or 'conv_next_distilled':
+    elif model_name=='conv_next' or model_name=='conv_next_distilled':
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
@@ -107,59 +138,42 @@ if __name__=='__main__':
         m2_dropout=0.3
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
 
-    classifier = skorch.NeuralNetClassifier(
-            model,
-            criterion=torch.nn.CrossEntropyLoss(),
-            optimizer=torch.optim.AdamW,
-            #train_split=predefined_split(valid_set),
-            iterator_train=DataLoader,
-            iterator_valid=DataLoader,
-            iterator_train__shuffle=True,
-            iterator_train__pin_memory=True,
-            iterator_valid__pin_memory=True,
-            iterator_train__num_workers=4 ,
-            iterator_valid__num_workers=4,
-            iterator_train__persistent_workers=True,
-            iterator_valid__persistent_workers=True,
-            batch_size=16,
-            device='cuda',
-            warm_start=True,
-            )
+    model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
 
-    classifier.initialize()
-    classifier.load_params(
-        f_params=f'model/{model_name}best_param.pkl', f_optimizer=f'model/{model_name}best_opt.pkl', 
-        f_history=f'model/{model_name}best_history.json')
-    print("Paramters Loaded")
+    model.to(device)
 
+    loss_fn=torch.nn.CrossEntropyLoss()
+    
+    test_dataloader2 = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                   persistent_workers=True, shuffle=True)
+    
     iterations=5
     accuracy=[]
     f1=[]
     auc=[]
-    test_loader=DataLoader(test_set,batch_size=8,shuffle=False)
-    for _ in range(iterations):
-        probs=[]
-        actual_labels=[]
-        for test_features, actual_lb in tqdm(test_loader):
-            prob=classifier.predict_proba(test_features)
-            actual_lb=np.array(actual_lb)
-            probs.append(prob)
-            actual_labels.append(actual_lb)
+    labels=[]
+    pred_labels=[]
+    for i in range(iterations):
+        model.eval()
+    
+        _,iteration_labels,probabilities=test(model,test_dataloader2,loss_fn)
+        pred_iteration_labels=np.argmax(probabilities,axis=1)
+        iteration_auc=roc_auc_score(iteration_labels,probabilities[:,1])
+        iteration_accuracy=np.mean(pred_iteration_labels==iteration_labels)
+        iteration_f1=f1_score(iteration_labels,pred_iteration_labels,average='weighted')
 
-        probs=np.concatenate(probs,axis=0)
-        pred_labels=np.argmax(probs,axis=1)
-        actual_labels=np.concatenate(actual_labels,axis=0)
-
-        iteration_auc=roc_auc_score(actual_labels,probs[:,1])
-        iteration_accuracy=np.mean(pred_labels==actual_labels)
-        iteration_f1=f1_score(actual_labels,pred_labels)
-
+        labels.append(iteration_labels)
+        pred_labels.append(pred_iteration_labels)
         accuracy.append(iteration_accuracy)
         f1.append(iteration_f1)
         auc.append(iteration_auc)
 
-    print(model_name)
-
     print(f"Accuracy mean: {np.mean(accuracy)} standard deviation: {np.std(accuracy)}")
     print(f"F1-Score mean: {np.mean(f1)} standard deviation: {np.std(f1)}")
     print(f"ROC_AUC  mean: {np.mean(auc)} standard deviation: {np.std(auc)}")
+
+    labels=np.concatenate(labels,axis=0)
+    pred_labels=np.concatenate(pred_labels,axis=0)
+    ConfusionMatrixDisplay.from_predictions(labels,pred_labels,display_labels=['normal','osteoporosis']
+                                            ,normalize='all')
+    plt.show()

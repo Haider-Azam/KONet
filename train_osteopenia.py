@@ -4,12 +4,17 @@ torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-from copy import deepcopy
-from torch.nn import functional as F
-from sklearn.metrics import accuracy_score
-import warnings
-from tqdm import tqdm
 import numpy as np
+from tqdm import tqdm
+import matplotlib.pyplot as plt  
+import warnings
+import random
+import os
+from sklearn.model_selection import KFold
+import csv
+script_name = os.path.basename(__file__)
+results_file = "fold_results.csv"
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 class KONet(torch.nn.Module):
@@ -44,39 +49,7 @@ class KONet(torch.nn.Module):
         m2=self.dense(x)
         out=self.m1_ratio*m1+self.m2_ratio*m2
         return out
-
-
-def prep_dataset(path,image_shape=224,augmented_dataset_size=4000):
-
-    non_augment_transform=v2.Compose([v2.ToImageTensor(),
-                        v2.ToDtype(torch.float32),
-                        v2.Resize((image_shape,image_shape),antialias=True),
-                        v2.Normalize(mean=[0],std=[1]),
-                        ])
-    transforms=v2.Compose([v2.ToImageTensor(),
-                        v2.ToDtype(torch.float32),
-                        v2.RandomAffine(degrees=30,shear=30),
-                        v2.RandomZoomOut(side_range=(1,1.5)),
-                        v2.Resize((image_shape,image_shape),antialias=True),
-                        v2.Normalize(mean=[0],std=[1]),
-                        ])
-    non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
-    dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
-    factor=augmented_dataset_size//len(dataset)-1
-
-    new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
-    del non_augmented_dataset,dataset
-
     
-    #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
-    generator1 = torch.Generator().manual_seed(42)
-    train_split=0.8
-    valid_split=0.1
-    test_split=0.1
-    return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
-                                                                generator=generator1)
-        
-
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
@@ -87,7 +60,6 @@ def test(model,dataloader,loss_fn):
             data , label=data.to(device) , label.to(device)
 
             output=model(data)
-            #print(output.shape)
             loss+=loss_fn(output , label)
             prob=output.softmax(dim=1)
             labels.append(label.detach().cpu().numpy())
@@ -97,7 +69,49 @@ def test(model,dataloader,loss_fn):
     probabilities=np.concatenate(probabilities,axis=0)
 
     loss=loss/len(dataloader)
-    return loss,labels,probabilities
+    return loss.item(),labels,probabilities
+
+def set_random_seed(seed: int = 2222, deterministic: bool = False):
+        """Set seeds"""
+        random.seed(seed)
+        np.random.seed(seed)
+        os.environ["PYTHONHASHSEED"] = str(seed)
+        torch.manual_seed(seed)
+        torch.cuda.manual_seed(seed)  # type: ignore
+        torch.backends.cudnn.benchmark = True
+        torch.backends.cudnn.deterministic = deterministic  # type: ignore
+
+
+def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
+                 ,train_split=0.8,valid_split=0.1,test_split=0.1):
+
+    non_augment_transform=v2.Compose([v2.ToImageTensor(),
+                        v2.ToDtype(torch.float32),
+                        v2.Resize((image_shape,image_shape),antialias=True),
+                        v2.Normalize(mean=[0.5], std=[0.5]),
+                        ])
+    transforms=v2.Compose([v2.ToImageTensor(),
+                        v2.ToDtype(torch.float32),
+                        v2.RandomAffine(degrees=30,shear=30),
+                        v2.RandomZoomOut(side_range=(1,1.5)),
+                        v2.Resize((image_shape,image_shape),antialias=True),
+                        v2.Normalize(mean=[0.5], std=[0.5]),
+                        ])
+    non_augmented_dataset=torchvision.datasets.ImageFolder(path,transform=non_augment_transform)
+    dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
+    factor=augmented_dataset_size//len(dataset)
+
+    new_dataset=torch.utils.data.ConcatDataset([non_augmented_dataset]+[dataset for _ in range(factor)])
+    del non_augmented_dataset,dataset
+
+    
+    #dataset=torchvision.datasets.ImageFolder(path,transform=transforms)
+    generator1 = torch.Generator().manual_seed(42)
+
+    #return torch.utils.data.random_split(new_dataset, [train_split,valid_split,test_split],
+    #                                                            generator=generator1)
+    return torch.utils.data.random_split(new_dataset, [train_split+valid_split,test_split],
+                                                                generator=generator1)
 
 if __name__=='__main__':
     
@@ -105,94 +119,133 @@ if __name__=='__main__':
     n_classes=2
     image_shape=224
     augmented_dataset_size=4000
-
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
-
+    batch_size=4
+    seed=42
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class Preprocessed"
     new_n_classes=3
 
+    set_random_seed(seed)
 
-    train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
+    #train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
+    dataset,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
 
-    
-    train_dataloader2 = DataLoader(train_set2, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
-    
-    valid_dataloader1 = DataLoader(valid_set2, batch_size=8, num_workers=4, pin_memory=True,
-                                   persistent_workers=True, shuffle=True)
-    
-    
-    model_name='dense_3_class'
-    large_model_name='denseOtherFinetuned'
-    #Large model initiallization
+    kf = KFold(n_splits=10, shuffle=True, random_state=seed)
+    splits = list(kf.split(np.arange(len(dataset))))
 
-    if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
-        model=densenet121(weights=DenseNet121_Weights.DEFAULT)
-        p=0.3
-        model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=1024,out_features=n_classes),
-                                            )
-    #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
-    model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
-    old_classifier=model.classifier.state_dict()
-
-    model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=1024,out_features=new_n_classes),
-                                            )
-    
-    #For generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
-    with torch.no_grad():
-        for name,param in model.classifier.named_parameters():
-            param[[0,2]]=old_classifier[name]
-
-    model.to(device)
-    optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
-
-    model.train()
-    optimizer.zero_grad()
-    loss_fn=torch.nn.CrossEntropyLoss()
-
-    epochs=30
-
-    print('Training on second dataset')
+    all_loss_results = []
+    all_acc_results = []
     best_test_acc=0
-    for i in range(epochs):
-        print('Training')
+    for fold, (train_indices, val_indices) in enumerate(splits):
+        print(f"Fold {fold+1}")
+        train_set = torch.utils.data.Subset(dataset, train_indices)
+        valid_set = torch.utils.data.Subset(dataset, val_indices)
+        print(f"Train set size: {len(train_set)}, Validation set size: {len(valid_set)}")
+        # You can now use train_set and valid_set for training/validation in this fold
+        
+        train_dataloader = DataLoader(train_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    persistent_workers=True, shuffle=True)
+        
+        valid_dataloader = DataLoader(valid_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    persistent_workers=True, shuffle=True)
+        
+        test_dataloader = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                     persistent_workers=True, shuffle=False)
+        
+        model_name='dense_other'
+        #Large model initiallization
+
+        if "dense" in model_name:
+            model=densenet121(weights=DenseNet121_Weights.DEFAULT)
+            p=0.3
+            model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=1024,out_features=n_classes),
+                                                )
+        #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
+        model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+        old_classifier=model.classifier.state_dict()
+
+        model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=1024,out_features=new_n_classes),
+                                                )
+        
+        #For generalization, use a sorted dict to hold class idxs and convert values into a list on indexes
+        with torch.no_grad():
+            for name,param in model.classifier.named_parameters():
+                param[[0,2]]=old_classifier[name]
+
+        model.to(device)
+        optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
+
         model.train()
-        total_loss=0
-        for train_data,train_label in tqdm(train_dataloader2):
-            
-            train_data , train_label=train_data.to(device) , train_label.to(device)
+        optimizer.zero_grad()
+        loss_fn=torch.nn.CrossEntropyLoss()
 
-            #Zero the gradient for every batch for mini-batch gradient descent
-            optimizer.zero_grad()
+        epochs=20
+        loss_results = []
+        acc_results = []
+        
+        for i in range(epochs):
+            print('Training')
+            model.train()
+            total_loss=0
+            total_acc=0
+            for train_data,train_label in tqdm(train_dataloader):
+                
+                train_data , train_label=train_data.to(device) , train_label.to(device)
 
-            output=model(train_data)
+                #Zero the gradient for every batch for mini-batch gradient descent
+                optimizer.zero_grad()
 
-            loss=loss_fn(output , train_label)
+                output=model(train_data)
 
-            total_loss+=loss
+                loss=loss_fn(output , train_label)
 
-            loss.backward()
-            optimizer.step()
+                train_pred = output.softmax(dim=1).argmax(dim=1).detach().cpu().numpy()
+                train_label_np = train_label.detach().cpu().numpy()
 
-        print('Testing on first dataset')
+                total_acc+= np.mean(train_pred==train_label_np)
+
+                total_loss+=loss.item()
+
+                loss.backward()
+                optimizer.step()
+
+            print('Testing on first dataset')
+            model.eval()
+
+            val_loss,labels,probabilities=test(model,valid_dataloader,loss_fn)
+            pred_labels=np.argmax(probabilities,axis=1)
+            val_acc=np.mean(pred_labels==labels)
+
+            total_loss=total_loss/(len(train_dataloader))
+            total_acc=total_acc/(len(train_dataloader))
+
+            print('Train Epoch:',i+1,'loss:',total_loss)
+            print('val loss1:',val_loss,'val accuracy1:',val_acc)
+
+            loss_results.append((total_loss,val_loss))
+            acc_results.append((total_acc,val_acc))
+
         model.eval()
+        test_loss, test_labels, test_probabilities = test(model, test_dataloader, loss_fn)
+        test_pred_labels = np.argmax(test_probabilities, axis=1)
+        test_acc = np.mean(test_pred_labels == test_labels)
+        print(f"Test set accuracy for fold {fold+1}: {test_acc}")
 
-        loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
-        pred_labels=np.argmax(probabilities,axis=1)
-        accuracy1=np.mean(pred_labels==labels)
-
-
-        total_loss=total_loss/(len(train_dataloader2))
-        test_acc1=np.mean(accuracy1)
-
-        print('Train Epoch:',i+1,'loss:',total_loss.item())
-        print('test loss1:',loss1.item(),'test accuracy1:',test_acc1)
-
-        if best_test_acc<test_acc1:
-            best_test_acc=test_acc1
+        if best_test_acc<test_acc:
+            best_test_acc=test_acc
             print('Loss improved, saving weights')
-            torch.save(model.state_dict(),f'model/{model_name}best_param.pkl') 
-    #loss,accuracy=test(model,test_dataloader2,loss_fn)
-    #print('loss:',loss,'\nAccuracy:',accuracy)
-    #torch.save(model.state_dict(),f'model/{model_name}best_param.pkl')
+            torch.save(model.state_dict(),f'model/{model_name}_3_classbest_param.pkl') 
+
+        # Save loss and accuracy results for this fold
+        all_loss_results.append(loss_results)
+        all_acc_results.append(acc_results)
+
+        final_val_acc = acc_results[-1][1]
+
+        # Save best accuracy for this fold
+        with open(results_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(['script', 'model', 'fold', 'valid_accuracy', 'test_accuracy'])
+            writer.writerow([script_name, model_name, fold+1, final_val_acc, test_acc])
