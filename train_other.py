@@ -120,7 +120,7 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
 
     set_random_seed(seed)
     
@@ -131,6 +131,7 @@ if __name__=='__main__':
     splits = list(kf.split(np.arange(len(dataset))))
     all_loss_results = []
     all_acc_results = []
+    best_test_acc = 0
     for fold, (train_indices, val_indices) in enumerate(splits):
         print(f"Fold {fold+1}")
         train_set = torch.utils.data.Subset(dataset, train_indices)
@@ -147,7 +148,7 @@ if __name__=='__main__':
         test_dataloader = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                      persistent_workers=True, shuffle=False)
 
-        model_name='mobilenet'
+        model_name='KONet'
         print('Model: ',model_name)
         #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
         #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -233,7 +234,6 @@ if __name__=='__main__':
             print('Train Epoch:',i+1,'loss:',total_loss)
             print('val loss1:',val_loss,'val accuracy1:',val_acc)
 
-            torch.save(model.state_dict(),f'model/{model_name}_other_param.pkl') 
             loss_results.append((total_loss,val_loss))
             acc_results.append((total_acc,val_acc))
 
@@ -276,7 +276,7 @@ if __name__=='__main__':
     plt.xlim(1, 20)
     plt.xticks(epochs_range)
     plt.legend()
-    plt.savefig(f"{script_name}_{model_name}_allfolds_loss.png")
+    plt.savefig(f"{script_name}_{model_name}_loss.png")
     plt.show()
 
     # Plot all folds overlapped for accuracy (epochs 1 to 20)
@@ -292,7 +292,7 @@ if __name__=='__main__':
     plt.xlim(1, 20)
     plt.xticks(epochs_range)
     plt.legend()
-    plt.savefig(f"{script_name}_{model_name}_allfolds_acc.png")
+    plt.savefig(f"{script_name}_{model_name}_acc.png")
     plt.show()
 
     

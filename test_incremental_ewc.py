@@ -121,33 +121,32 @@ if __name__=='__main__':
     image_shape=224
     augmented_dataset_size=4000
     batch_size=4
-    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset Preprocessed"
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
     seed=42
     
     set_random_seed(seed)
     
-    train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
-    train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
+    dataset1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
+    dataset2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='conv_next_distilled_incremental'
-    large_model_name='conv_next'
+    large_model_name='mobilenet_incremental_early_stop'
     #Large model initiallization
 
-    if large_model_name=='dense':
+    if 'dense' in large_model_name:
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                             torch.nn.Linear(in_features=1024,out_features=n_classes),
                                             )
-    elif large_model_name=='KONet':
+    elif 'KONet' in large_model_name:
         m1_ratio=0.6
         m2_ratio=0.4
         m1_dropout=0.1
         m2_dropout=0.3
         model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
 
-    elif large_model_name=='conv_next' or large_model_name=='conv_next_distilled':
+    elif 'conv_next' in large_model_name:
         p=0.3
         model=torchvision.models.convnext_tiny(weights='DEFAULT')
         model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
@@ -158,7 +157,7 @@ if __name__=='__main__':
         model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
         model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
-    model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+    model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
     model.to(device)
 
     loss_fn=torch.nn.CrossEntropyLoss()

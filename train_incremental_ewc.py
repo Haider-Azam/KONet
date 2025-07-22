@@ -14,6 +14,9 @@ import matplotlib.pyplot as plt
 from tqdm import tqdm
 import numpy as np
 from sklearn.model_selection import KFold
+import csv
+script_name = os.path.basename(__file__)
+results_file = "fold_results.csv"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 #Only give first model output
@@ -162,143 +165,189 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset Preprocessed"
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
     
     set_random_seed(seed)
     
-    train_set1,valid_set1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
-    train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
+    dataset1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
+    dataset2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    train_dataloader1 = DataLoader(train_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                   shuffle=True)
-    
-    train_dataloader2 = DataLoader(train_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                   shuffle=True)
-    
-    valid_dataloader1 = DataLoader(valid_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                   shuffle=True)
-    
-    valid_dataloader2 = DataLoader(valid_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                   shuffle=True)
-    
-    model_name='conv_next_incremental'
-    large_model_name='conv_next'
-    #Large model initiallization
+    model_name='mobilenet_distilled'
+    dataset1_bestfold=2
 
-    if large_model_name=='dense':
-        model=densenet121(weights=DenseNet121_Weights.DEFAULT)
-        p=0.3
-        model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=1024,out_features=n_classes),
-                                            )
-    elif large_model_name=='KONet':
-        m1_ratio=0.6
-        m2_ratio=0.4
-        m1_dropout=0.1
-        m2_dropout=0.3
-        model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
+    kf1 = KFold(n_splits=10, shuffle=True, random_state=seed)
+    splits1 = list(kf1.split(np.arange(len(dataset1))))
 
-    elif large_model_name=='conv_next' or large_model_name=='conv_next_distilled':
-        p=0.3
-        model=torchvision.models.convnext_tiny(weights='DEFAULT')
-        model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                            torch.nn.Linear(in_features=768,out_features=n_classes),
-                                            )
+    train_indices, val_indices = splits1[dataset1_bestfold-1]
+    train_set1 = torch.utils.data.Subset(dataset1, train_indices)
+    valid_set1 = torch.utils.data.Subset(dataset1, val_indices)
+
+    kf2 = KFold(n_splits=10, shuffle=True, random_state=seed)
+    splits2 = list(kf2.split(np.arange(len(dataset2))))
+
+    all_loss_results = []
+    all_acc_results = []
+    best_test_acc = 0
+    for fold, (train_indices, val_indices) in enumerate(splits2):
+        print(f"Fold {fold+1}")
+        train_set2 = torch.utils.data.Subset(dataset2, train_indices)
+        valid_set2 = torch.utils.data.Subset(dataset2, val_indices)
+        print(f"Train set size: {len(train_set2)}, Validation set size: {len(valid_set2)}")
+        # You can now use train_set and valid_set for training/validation in this fold
+
+        train_dataloader1 = DataLoader(train_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
         
-    elif 'mobilenet' in large_model_name:
-        model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
-        model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+        train_dataloader2 = DataLoader(train_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        valid_dataloader1 = DataLoader(valid_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        valid_dataloader2 = DataLoader(valid_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        test_dataloader1 = DataLoader(test_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        test_dataloader2 = DataLoader(test_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        
 
-    model.load_state_dict(torch.load(f'model/{large_model_name}best_param.pkl'))
-    #model=increte_model(model,)
-    
-    model.to(device)
-    optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
+        if model_name=='dense':
+            model=densenet121(weights=DenseNet121_Weights.DEFAULT)
+            p=0.3
+            model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=1024,out_features=n_classes),
+                                                )
+        elif model_name=='KONet':
+            m1_ratio=0.6
+            m2_ratio=0.4
+            m1_dropout=0.1
+            m2_dropout=0.3
+            model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
 
-    #After training, pass the dataset through the model to get the gradients of dataset
-    model.train()
-    optimizer.zero_grad()
-    loss_fn=torch.nn.CrossEntropyLoss()
-
-    print('Saving first dataset gradients and parameters')
-    model,optpar_dict,fisher_dict=ewc_init(model,train_dataloader1,loss_fn)
-    epochs=20
-    ewc_lambda=16
-    loss_results = []
-    acc_results = []
-
-    print('Training on second dataset')
-    best_test_acc=0
-    for i in range(epochs):
-        print('Training')
-        model.train()
-        total_loss=0
-        total_acc=0
-        for train_data,train_label in tqdm(train_dataloader2):
+        elif model_name=='conv_next' or model_name=='conv_next_distilled':
+            p=0.3
+            model=torchvision.models.convnext_tiny(weights='DEFAULT')
+            model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=768,out_features=n_classes),
+                                                )
             
-            train_data , train_label=train_data.to(device) , train_label.to(device)
+        elif 'mobilenet' in model_name:
+            model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
+            model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
 
-            #Zero the gradient for every batch for mini-batch gradient descent
-            optimizer.zero_grad()
+        model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+        #model=increte_model(model,)
+        
+        model.to(device)
+        optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
 
-            output=model(train_data)
+        #After training, pass the dataset through the model to get the gradients of dataset
+        model.train()
+        optimizer.zero_grad()
+        loss_fn=torch.nn.CrossEntropyLoss()
 
-            train_pred = output.softmax(dim=1).argmax(dim=1).detach().cpu().numpy()
-            train_label_np = train_label.detach().cpu().numpy()
+        print('Saving first dataset gradients and parameters')
+        model,optpar_dict,fisher_dict=ewc_init(model,train_dataloader1,loss_fn)
+        epochs=20
+        ewc_lambda=16
+        loss_results = []
+        acc_results = []
 
-            total_acc+= np.mean(train_pred==train_label_np)
+        print('Training on second dataset')
+        
+        for i in range(epochs):
+            print('Training')
+            model.train()
+            total_loss=0
+            total_acc=0
+            for train_data,train_label in tqdm(train_dataloader2):
+                
+                train_data , train_label=train_data.to(device) , train_label.to(device)
 
-            loss=loss_fn(output , train_label)
+                #Zero the gradient for every batch for mini-batch gradient descent
+                optimizer.zero_grad()
 
-            distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
-            loss+=distill_loss
+                output=model(train_data)
 
-            total_loss+=loss.item()
-            #print('distill loss:',distill_loss)
-            #print('total loss:',loss)
-            loss.backward()
-            optimizer.step()
+                train_pred = output.softmax(dim=1).argmax(dim=1).detach().cpu().numpy()
+                train_label_np = train_label.detach().cpu().numpy()
 
-        print('Testing on first dataset')
+                total_acc+= np.mean(train_pred==train_label_np)
+
+                loss=loss_fn(output , train_label)
+
+                distill_loss=ewc_loss(model,optpar_dict,fisher_dict,ewc_lambda=ewc_lambda)
+                loss+=distill_loss
+
+                total_loss+=loss.item()
+                #print('distill loss:',distill_loss)
+                #print('total loss:',loss)
+                loss.backward()
+                optimizer.step()
+
+            print('Testing on first dataset')
+            model.eval()
+
+            loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
+            pred_labels=np.argmax(probabilities,axis=1)
+            accuracy1=np.mean(pred_labels==labels)
+
+            print('Testing on second dataset')
+            model.eval()
+
+            loss2,labels,probabilities=test(model,valid_dataloader2,loss_fn)
+            pred_labels=np.argmax(probabilities,axis=1)
+            accuracy2=np.mean(pred_labels==labels)
+
+            total_loss=total_loss/(len(train_dataloader2))
+            total_acc=total_acc/(len(train_dataloader2))
+            val_acc1=np.mean(accuracy1)
+            val_acc2=np.mean(accuracy2)
+            print('Train Epoch:',i+1,'loss:',total_loss)
+            print('val loss1:',loss1,'val accuracy1:',val_acc1,
+                'val loss2:',loss2,'val accuracy2:',val_acc2)
+
+            harmonic_acc=2*val_acc1*val_acc2/(val_acc1+val_acc2)
+            
+            loss_results.append((total_loss,loss1,loss2))
+            acc_results.append((total_acc,harmonic_acc))
+
         model.eval()
 
-        loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
+        loss1,labels,probabilities=test(model,test_dataloader1,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
         accuracy1=np.mean(pred_labels==labels)
 
-        print('Testing on second dataset')
-        model.eval()
-
-        loss2,labels,probabilities=test(model,valid_dataloader2,loss_fn)
+        loss2,labels,probabilities=test(model,test_dataloader2,loss_fn)
         pred_labels=np.argmax(probabilities,axis=1)
         accuracy2=np.mean(pred_labels==labels)
 
-        total_loss=total_loss/(len(train_dataloader2))
-        total_acc=total_acc/(len(train_dataloader2))
         test_acc1=np.mean(accuracy1)
         test_acc2=np.mean(accuracy2)
         print('Train Epoch:',i+1,'loss:',total_loss)
-        print('test loss1:',loss1,'test accuracy1:',test_acc1,
-              'test loss2:',loss2,'test accuracy2:',test_acc2)
+        print('test loss1:',loss1,'test accuracy1:',val_acc1,
+            'test loss2:',loss2,'test accuracy2:',val_acc2)
 
-        harmonic_acc=2*test_acc1*test_acc2/(test_acc1+test_acc2)
-        if best_test_acc<harmonic_acc:
-            best_test_acc=harmonic_acc
-            print('Loss improved, saving weights')
-            torch.save(model.state_dict(),f'model/{model_name}best_param.pkl') 
-        loss_results.append((total_loss,loss1,loss2))
-        acc_results.append((total_acc,test_acc1,test_acc2))
-    plt.plot(loss_results)
-    plt.xlabel("Epochs")
-    plt.ylabel("Cross Entropy loss")
-    plt.legend(['train loss','dataset 1 valid loss','dataset 2a valid loss'])
-    plt.title(f'{model_name} loss')
-    plt.show()
+        harmonic_test_acc=2*test_acc1*test_acc2/(test_acc1+test_acc2)
 
-    plt.plot(acc_results)
-    plt.xlabel("Epochs")
-    plt.ylabel("Accuracy")
-    plt.legend(['train accuracy','dataset 1 valid accuracy','dataset 2a valid accuracy'])
-    plt.title(f'{model_name} accuracy')
-    plt.show()
+        if best_test_acc<harmonic_test_acc:
+                best_test_acc=harmonic_test_acc
+                print('Loss improved, saving weights')
+                torch.save(model.state_dict(),f'model/{model_name}_incrementalbest_param.pkl') 
+        # Save loss and accuracy results for this fold
+        all_loss_results.append(loss_results)
+        all_acc_results.append(acc_results)
+
+        final_val_acc = acc_results[-1][1]
+
+        # Save best accuracy for this fold
+        with open(results_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(['script', 'model', 'fold', 'valid_accuracy', 'test_accuracy'])
+            writer.writerow([script_name, model_name, fold+1, final_val_acc, harmonic_test_acc])

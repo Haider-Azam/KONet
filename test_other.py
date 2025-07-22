@@ -117,11 +117,11 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
 
     set_random_seed(seed)
     
-    train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
+    dataset,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
 
     model_name='mobilenet_distilled'
     print('Model: ',model_name)

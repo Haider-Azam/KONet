@@ -119,7 +119,7 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
 
     set_random_seed(seed)
     

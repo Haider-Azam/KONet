@@ -1,17 +1,17 @@
-#Other dataset is available at https://data.mendeley.com/datasets/fxjm8fb6mw/2
-#We modified it by removing osteopenia class and then manually separating images with two knees into separate images.
 import torch
 import torchvision
 torchvision.disable_beta_transforms_warning()
 from torchvision.transforms import v2
 from torchvision.models import efficientnet_b0,EfficientNet_B0_Weights,densenet121,DenseNet121_Weights
 from torch.utils.data import DataLoader
-import numpy as np
-import matplotlib.pyplot as plt
-from tqdm import tqdm
+from copy import deepcopy
+from torch.nn import functional as F
+from sklearn.metrics import accuracy_score
 import warnings
 import random
 import os
+from tqdm import tqdm
+import numpy as np
 from sklearn.model_selection import KFold
 import csv
 script_name = os.path.basename(__file__)
@@ -82,7 +82,6 @@ def set_random_seed(seed: int = 2222, deterministic: bool = False):
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = deterministic  # type: ignore
 
-    
 def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
                  ,train_split=0.8,valid_split=0.1,test_split=0.1):
 
@@ -121,59 +120,61 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
-
+    path1="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset Preprocessed"
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
+    
     set_random_seed(seed)
     
-    # train_split=0.2
-    # valid_split=0.1
-    # test_split=0.7
-    # train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size
-    #                                           ,train_split,valid_split,test_split)
-    #train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
-    dataset,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
+    dataset1,test_set1=prep_dataset(path1,image_shape,augmented_dataset_size)
+    dataset2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    kf = KFold(n_splits=10, shuffle=True, random_state=seed)
-    splits = list(kf.split(np.arange(len(dataset))))
+    model_name='conv_next'
+    dataset1_bestfold=10
 
-    for fold, (train_indices, val_indices) in enumerate(splits):
+    kf1 = KFold(n_splits=10, shuffle=True, random_state=seed)
+    splits1 = list(kf1.split(np.arange(len(dataset1))))
+
+    train_indices, val_indices = splits1[dataset1_bestfold-1]
+    train_set1 = torch.utils.data.Subset(dataset1, train_indices)
+    valid_set1 = torch.utils.data.Subset(dataset1, val_indices)
+
+    kf2 = KFold(n_splits=10, shuffle=True, random_state=seed)
+    splits2 = list(kf2.split(np.arange(len(dataset2))))
+
+    all_loss_results = []
+    all_acc_results = []
+    best_test_acc = 0
+    for fold, (train_indices, val_indices) in enumerate(splits2):
         print(f"Fold {fold+1}")
-        train_set = torch.utils.data.Subset(dataset, train_indices)
-        valid_set = torch.utils.data.Subset(dataset, val_indices)
-        print(f"Train set size: {len(train_set)}, Validation set size: {len(valid_set)}")
+        train_set2 = torch.utils.data.Subset(dataset2, train_indices)
+        valid_set2 = torch.utils.data.Subset(dataset2, val_indices)
+        print(f"Train set size: {len(train_set2)}, Validation set size: {len(valid_set2)}")
         # You can now use train_set and valid_set for training/validation in this fold
+
+        train_dataloader1 = DataLoader(train_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
         
-        train_dataloader = DataLoader(train_set, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                    persistent_workers=True, shuffle=True)
+        train_dataloader2 = DataLoader(train_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
         
-        valid_dataloader = DataLoader(valid_set, batch_size=batch_size, num_workers=4, pin_memory=True,
-                                    persistent_workers=True, shuffle=True)
-
-
-        model_name='mobilenet'
-        print('Model: ',model_name)
-        #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
-        #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
-        if model_name=='efficient':
-            model=efficientnet_b0(weights=EfficientNet_B0_Weights.DEFAULT)
-            p=0.1
-            model.classifier[0]=torch.nn.Dropout(p=p,inplace=True)
-            model.classifier[-1]=torch.nn.Linear(in_features=1280,out_features=n_classes)
-
-        elif model_name=='dense':
+        valid_dataloader1 = DataLoader(valid_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        valid_dataloader2 = DataLoader(valid_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        test_dataloader1 = DataLoader(test_set1, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        test_dataloader2 = DataLoader(test_set2, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                    shuffle=True)
+        
+        if model_name=='dense':
             model=densenet121(weights=DenseNet121_Weights.DEFAULT)
             p=0.3
             model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                                 torch.nn.Linear(in_features=1024,out_features=n_classes),
                                                 )
-        
-        elif model_name=='conv_next':
-            p=0.3
-            model=torchvision.models.convnext_tiny(weights='DEFAULT')
-            model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
-                                                torch.nn.Linear(in_features=768,out_features=n_classes),
-                                                )
-
         elif model_name=='KONet':
             m1_ratio=0.6
             m2_ratio=0.4
@@ -181,12 +182,20 @@ if __name__=='__main__':
             m2_dropout=0.3
             model=KONet(m1_ratio=m1_ratio,m2_ratio=m2_ratio,m1_dropout=m1_dropout,m2_dropout=m2_dropout,n_classes=n_classes)
 
-        elif model_name=='mobilenet':
+        elif model_name=='conv_next' or model_name=='conv_next_distilled':
+            p=0.3
+            model=torchvision.models.convnext_tiny(weights='DEFAULT')
+            model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
+                                                torch.nn.Linear(in_features=768,out_features=n_classes),
+                                                )
+            
+        elif 'mobilenet' in model_name:
             model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
             model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
+
+        model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
         
         model.to(device)
-        model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
         optimizer=torch.optim.AdamW(model.parameters(),lr=0.0000625)
 
         model.train()
@@ -197,13 +206,14 @@ if __name__=='__main__':
         loss_results = []
         acc_results = []
 
-        best_test_acc=0
+        print('Training on second dataset')
+        
         for i in range(epochs):
             print('Training')
             model.train()
             total_loss=0
             total_acc=0
-            for train_data,train_label in tqdm(train_dataloader):
+            for train_data,train_label in tqdm(train_dataloader2):
                 
                 train_data , train_label=train_data.to(device) , train_label.to(device)
 
@@ -220,47 +230,69 @@ if __name__=='__main__':
                 total_acc+= np.mean(train_pred==train_label_np)
 
                 total_loss+=loss.item()
-
+                #print('distill loss:',distill_loss)
+                #print('total loss:',loss)
                 loss.backward()
                 optimizer.step()
 
             print('Testing on first dataset')
             model.eval()
 
-            test_loss,labels,probabilities=test(model,valid_dataloader,loss_fn)
+            loss1,labels,probabilities=test(model,valid_dataloader1,loss_fn)
             pred_labels=np.argmax(probabilities,axis=1)
-            test_acc=np.mean(pred_labels==labels)
+            accuracy1=np.mean(pred_labels==labels)
 
-            total_loss=total_loss/(len(train_dataloader))
-            total_acc=total_acc/(len(train_dataloader))
+            print('Testing on second dataset')
+            model.eval()
 
+            loss2,labels,probabilities=test(model,valid_dataloader2,loss_fn)
+            pred_labels=np.argmax(probabilities,axis=1)
+            accuracy2=np.mean(pred_labels==labels)
+
+            total_loss=total_loss/(len(train_dataloader2))
+            total_acc=total_acc/(len(train_dataloader2))
+            val_acc1=np.mean(accuracy1)
+            val_acc2=np.mean(accuracy2)
             print('Train Epoch:',i+1,'loss:',total_loss)
-            print('test loss1:',test_loss,'test accuracy1:',test_acc)
+            print('val loss1:',loss1,'val accuracy1:',val_acc1,
+                'val loss2:',loss2,'val accuracy2:',val_acc2)
 
-            if best_test_acc<test_acc:
-                best_test_acc=test_acc
+            harmonic_acc=2*val_acc1*val_acc2/(val_acc1+val_acc2)
+            
+            loss_results.append((total_loss,loss1,loss2))
+            acc_results.append((total_acc,harmonic_acc))
+
+        model.eval()
+
+        loss1,labels,probabilities=test(model,test_dataloader1,loss_fn)
+        pred_labels=np.argmax(probabilities,axis=1)
+        accuracy1=np.mean(pred_labels==labels)
+
+        loss2,labels,probabilities=test(model,test_dataloader2,loss_fn)
+        pred_labels=np.argmax(probabilities,axis=1)
+        accuracy2=np.mean(pred_labels==labels)
+
+        test_acc1=np.mean(accuracy1)
+        test_acc2=np.mean(accuracy2)
+        print('Train Epoch:',i+1,'loss:',total_loss)
+        print('test loss1:',loss1,'test accuracy1:',val_acc1,
+            'test loss2:',loss2,'test accuracy2:',val_acc2)
+
+        harmonic_test_acc=2*test_acc1*test_acc2/(test_acc1+test_acc2)
+
+        if best_test_acc<harmonic_test_acc:
+                best_test_acc=harmonic_test_acc
                 print('Loss improved, saving weights')
                 torch.save(model.state_dict(),f'model/{model_name}OtherFinetunedbest_param.pkl') 
-            loss_results.append((total_loss,test_loss))
-            acc_results.append((total_acc,test_acc))
+        # Save loss and accuracy results for this fold
+        all_loss_results.append(loss_results)
+        all_acc_results.append(acc_results)
 
-        plt.plot(loss_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Cross Entropy loss")
-        plt.legend(['train loss','valid loss'])
-        plt.title(f'{model_name} loss')
-        plt.show()
+        final_val_acc = acc_results[-1][1]
 
-        plt.plot(acc_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Accuracy")
-        plt.legend(['train accuracy','valid accuracy'])
-        plt.title(f'{model_name} accuracy')
-        plt.show()
-
-    # Save best accuracy for this fold
-    with open(results_file, mode='a', newline='') as f:
-        writer = csv.writer(f)
-        if f.tell() == 0:
-            writer.writerow(['script', 'model', 'fold', 'best_accuracy'])
-        writer.writerow([script_name, model_name, fold+1, best_test_acc])
+        # Save best accuracy for this fold
+        with open(results_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(['script', 'model', 'fold', 'valid_accuracy', 'test_accuracy'])
+            writer.writerow([script_name, model_name, fold+1, final_val_acc, harmonic_test_acc])

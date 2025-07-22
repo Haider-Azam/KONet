@@ -121,17 +121,16 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class"
+    path2="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified 3 class Preprocessed"
 
     set_random_seed(seed)
 
-    train_set2,valid_set2,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
+    dataset,test_set2=prep_dataset(path2,image_shape,augmented_dataset_size)
 
-    model_name='conv_next_distilled_incremental_lwf_3_class'
-    large_model_name='conv_next'
+    large_model_name='dense_other'
     #Large model initiallization
 
-    if large_model_name=='dense' or large_model_name=='denseOtherFinetuned':
+    if 'dense' in large_model_name:
         model=densenet121(weights=DenseNet121_Weights.DEFAULT)
         p=0.3
         model.classifier=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
@@ -152,7 +151,7 @@ if __name__=='__main__':
         model.classifier[3]=torch.nn.Linear(in_features=in_features,out_features=n_classes)
 
     #Loads the model with the old classifier head, saves the weights of old classifier and transfers it to new_classifier
-    model.load_state_dict(torch.load(f'model/{model_name}best_param.pkl'))
+    model.load_state_dict(torch.load(f'model/{large_model_name}_3_classbest_param.pkl'))
 
     model.to(device)
 

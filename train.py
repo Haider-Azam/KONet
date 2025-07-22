@@ -148,7 +148,7 @@ if __name__=='__main__':
         test_dataloader = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                      persistent_workers=True, shuffle=False)
         
-        model_name='mobilenet'
+        model_name='KONet'
         print('Model: ',model_name)
         #EfficientNetB0 has 16 MBConv layers, freeze till 8th MBConv layer then. Freeze all till before 5th sequential
         #DenseNet121 has 58 dense layers, freeze till 29th dense layer then. #Till before dense block 3
@@ -277,7 +277,7 @@ if __name__=='__main__':
     plt.xlim(1, 20)
     plt.xticks(epochs_range)
     plt.legend()
-    plt.savefig(f"{script_name}_{model_name}_allfolds_loss.png")
+    plt.savefig(f"{script_name}_{model_name}_loss.png")
     plt.show()
 
     # Plot all folds overlapped for accuracy (epochs 1 to 20)
@@ -293,7 +293,7 @@ if __name__=='__main__':
     plt.xlim(1, 20)
     plt.xticks(epochs_range)
     plt.legend()
-    plt.savefig(f"{script_name}_{model_name}_allfolds_acc.png")
+    plt.savefig(f"{script_name}_{model_name}_acc.png")
     plt.show()
 
     

@@ -164,7 +164,7 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
 
     set_random_seed(seed)
     
@@ -178,7 +178,7 @@ if __name__=='__main__':
 
     kf = KFold(n_splits=10, shuffle=True, random_state=seed)
     splits = list(kf.split(np.arange(len(dataset))))
-
+    best_test_acc=0
     for fold, (train_indices, val_indices) in enumerate(splits):
         print(f"Fold {fold+1}")
         train_set = torch.utils.data.Subset(dataset, train_indices)
@@ -238,7 +238,7 @@ if __name__=='__main__':
         loss_results = []
         acc_results = []
 
-        best_test_acc=0
+        
         for i in range(epochs):
             print('Training')
             small_model.train()

@@ -163,7 +163,7 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset"
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray Dataset Preprocessed"
     
     set_random_seed(seed)
     
@@ -172,7 +172,9 @@ if __name__=='__main__':
 
     kf = KFold(n_splits=10, shuffle=True, random_state=seed)
     splits = list(kf.split(np.arange(len(dataset))))
-
+    all_loss_results = []
+    all_acc_results = []
+    best_test_acc = 0
     for fold, (train_indices, val_indices) in enumerate(splits):
         print(f"Fold {fold+1}")
         train_set = torch.utils.data.Subset(dataset, train_indices)
@@ -185,9 +187,11 @@ if __name__=='__main__':
         
         valid_dataloader = DataLoader(valid_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                     persistent_workers=True, shuffle=True)
-
+        
+        test_dataloader = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                     persistent_workers=True, shuffle=False)
         large_model_name='dense'
-        small_model_name='mobilenet'
+        small_model_name='conv_next'
         #Large model initiallization
 
         if 'dense' in large_model_name:
@@ -232,8 +236,7 @@ if __name__=='__main__':
         epochs=20
         loss_results = []
         acc_results = []
-
-        best_test_acc=0
+        
         for i in range(epochs):
             print('Training')
             small_model.train()
@@ -266,41 +269,72 @@ if __name__=='__main__':
             print('Testing on first dataset')
             small_model.eval()
 
-            test_loss,labels,probabilities=test(small_model,valid_dataloader,test_loss_fn)
+            val_loss,labels,probabilities=test(small_model,valid_dataloader,test_loss_fn)
             pred_labels=np.argmax(probabilities,axis=1)
-            test_acc=np.mean(pred_labels==labels)
+            val_acc=np.mean(pred_labels==labels)
 
             total_loss=total_loss/(len(train_dataloader))
-            total_label_loss=total_label_loss/(len(train_dataloader))
             total_acc=total_acc/(len(train_dataloader))
 
             print('Train Epoch:',i+1,'loss:',total_loss)
-            print('test loss1:',test_loss,'test accuracy1:',test_acc)
+            print('val loss:',val_loss,'val accuracy:',val_acc)
 
-            if best_test_acc<test_acc:
-                best_test_acc=test_acc
-                print('Loss improved, saving weights')
-                torch.save(small_model.state_dict(),f'model/{small_model_name}_distilledbest_param.pkl')
-            loss_results.append((total_label_loss,test_loss))
-            acc_results.append((total_acc,test_acc))
+            loss_results.append((total_loss,val_loss))
+            acc_results.append((total_acc,val_acc))
 
-        plt.plot(loss_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Cross Entropy loss")
-        plt.legend(['train loss','valid loss'])
-        plt.title(f'{small_model_name} loss')
-        plt.show()
+        small_model.eval()
+        test_loss, test_labels, test_probabilities = test(small_model, test_dataloader, test_loss_fn)
+        test_pred_labels = np.argmax(test_probabilities, axis=1)
+        test_acc = np.mean(test_pred_labels == test_labels)
+        print(f"Test set accuracy for fold {fold+1}: {test_acc}")
 
-        plt.plot(acc_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Accuracy")
-        plt.legend(['train accuracy','valid accuracy'])
-        plt.title(f'{small_model_name} accuracy')
-        plt.show()
+        if best_test_acc<test_acc:
+            best_test_acc=test_acc
+            print('Loss improved, saving weights')
+            torch.save(small_model.state_dict(),f'model/{small_model_name}_distilledbest_param.pkl')
 
-    # Save best accuracy for this fold
-    with open(results_file, mode='a', newline='') as f:
-        writer = csv.writer(f)
-        if f.tell() == 0:
-            writer.writerow(['script', 'model', 'fold', 'best_accuracy'])
-        writer.writerow([script_name, small_model_name, fold+1, best_test_acc])
+        # Save loss and accuracy results for this fold
+        all_loss_results.append(loss_results)
+        all_acc_results.append(acc_results)
+
+        final_val_acc = acc_results[-1][1]
+
+        # Save best accuracy for this fold
+        with open(results_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(['script', 'model', 'fold', 'valid_accuracy', 'test_accuracy'])
+            writer.writerow([script_name, small_model_name, fold+1, final_val_acc, test_acc])
+
+    # Plot all folds overlapped for loss (epochs 1 to 20)
+    plt.figure()
+    epochs_range = range(1, 21)
+    for fold, loss_results in enumerate(all_loss_results):
+        train_losses = [x[0] for x in loss_results]
+        val_losses = [x[1] for x in loss_results]
+        plt.plot(epochs_range, train_losses, label=f"Fold {fold+1} train", alpha=0.5)
+        plt.plot(epochs_range, val_losses, label=f"Fold {fold+1} valid", linestyle='--', alpha=0.5)
+    plt.xlabel("Epochs")
+    plt.ylabel("Cross Entropy loss")
+    plt.title(f"{small_model_name} loss (all folds)")
+    plt.xlim(1, 20)
+    plt.xticks(epochs_range)
+    plt.legend()
+    plt.savefig(f"{script_name}_{small_model_name}_loss.png")
+    plt.show()
+
+    # Plot all folds overlapped for accuracy (epochs 1 to 20)
+    plt.figure()
+    for fold, acc_results in enumerate(all_acc_results):
+        train_accs = [x[0] for x in acc_results]
+        val_accs = [x[1] for x in acc_results]
+        plt.plot(epochs_range, train_accs, label=f"Fold {fold+1} train", alpha=0.5)
+        plt.plot(epochs_range, val_accs, label=f"Fold {fold+1} valid", linestyle='--', alpha=0.5)
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy")
+    plt.title(f"{small_model_name} accuracy (all folds)")
+    plt.xlim(1, 20)
+    plt.xticks(epochs_range)
+    plt.legend()
+    plt.savefig(f"{script_name}_{small_model_name}_acc.png")
+    plt.show()

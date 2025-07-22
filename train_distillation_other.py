@@ -11,9 +11,9 @@ from torch.nn import functional as F
 from sklearn.metrics import accuracy_score
 from tqdm import tqdm
 import numpy as np
-import matplotlib.pyplot as plt  
+import matplotlib.pyplot as plt 
 import random
-import os
+import os 
 import warnings
 from sklearn.model_selection import KFold
 import csv
@@ -92,7 +92,7 @@ class distill_loss(_WeightedLoss):
                                label_smoothing=self.label_smoothing)   
         loss = self.soft_target_loss_weight * soft_targets_loss + self.ce_loss_weight * label_loss
         return label_loss, loss
-
+    
 def test(model,dataloader,loss_fn):
     model.eval()
     loss=0
@@ -113,7 +113,7 @@ def test(model,dataloader,loss_fn):
     probabilities=np.concatenate(probabilities,axis=0)
 
     loss=loss/len(dataloader)
-    return loss.item(),labels,probabilities 
+    return loss.item(),labels,probabilities
 
 def set_random_seed(seed: int = 2222, deterministic: bool = False):
         """Set seeds"""
@@ -124,8 +124,7 @@ def set_random_seed(seed: int = 2222, deterministic: bool = False):
         torch.cuda.manual_seed(seed)  # type: ignore
         torch.backends.cudnn.benchmark = True
         torch.backends.cudnn.deterministic = deterministic  # type: ignore
-
-
+    
 def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
                  ,train_split=0.8,valid_split=0.1,test_split=0.1):
 
@@ -156,7 +155,7 @@ def prep_dataset(path,image_shape=224,augmented_dataset_size=4000
     #                                                            generator=generator1)
     return torch.utils.data.random_split(new_dataset, [train_split+valid_split,test_split],
                                                                 generator=generator1)
-   
+
 if __name__=='__main__':
     warnings.filterwarnings("ignore")
     n_classes=2
@@ -164,8 +163,8 @@ if __name__=='__main__':
     augmented_dataset_size=4000
     batch_size=4
     seed=42
-    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray"
-
+    path="D:\Osteoporosis detection\datasets\Osteoporosis Knee X-ray modified\Osteoporosis Knee X-ray Preprocessed"
+    
     set_random_seed(seed)
     
     #train_set,valid_set,test_set=prep_dataset(path,image_shape,augmented_dataset_size)
@@ -173,7 +172,9 @@ if __name__=='__main__':
 
     kf = KFold(n_splits=10, shuffle=True, random_state=seed)
     splits = list(kf.split(np.arange(len(dataset))))
-
+    all_loss_results = []
+    all_acc_results = []
+    best_test_acc = 0
     for fold, (train_indices, val_indices) in enumerate(splits):
         print(f"Fold {fold+1}")
         train_set = torch.utils.data.Subset(dataset, train_indices)
@@ -187,8 +188,10 @@ if __name__=='__main__':
         valid_dataloader = DataLoader(valid_set, batch_size=batch_size, num_workers=4, pin_memory=True,
                                     persistent_workers=True, shuffle=True)
         
+        test_dataloader = DataLoader(test_set, batch_size=batch_size, num_workers=4, pin_memory=True,
+                                     persistent_workers=True, shuffle=False)
         large_model_name='dense'
-        small_model_name='mobilenet'
+        small_model_name='conv_next'
         #Large model initiallization
 
         if 'dense' in large_model_name:
@@ -210,6 +213,7 @@ if __name__=='__main__':
             small_model.classifier[2]=torch.nn.Sequential(torch.nn.Dropout(p=p,inplace=True),
                                                 torch.nn.Linear(in_features=768,out_features=n_classes),
                                                 )
+            
         elif small_model_name=='mobilenet':
             small_model=torchvision.models.mobilenet_v3_small(weights='DEFAULT')
             small_model.classifier[3]=torch.nn.Linear(in_features=1024,out_features=n_classes)
@@ -232,8 +236,7 @@ if __name__=='__main__':
         epochs=20
         loss_results = []
         acc_results = []
-
-        best_test_acc=0
+        
         for i in range(epochs):
             print('Training')
             small_model.train()
@@ -266,41 +269,73 @@ if __name__=='__main__':
             print('Testing on first dataset')
             small_model.eval()
 
-            test_loss,labels,probabilities=test(small_model,valid_dataloader,test_loss_fn)
+            val_loss,labels,probabilities=test(small_model,valid_dataloader,test_loss_fn)
             pred_labels=np.argmax(probabilities,axis=1)
-            test_acc=np.mean(pred_labels==labels)
+            val_acc=np.mean(pred_labels==labels)
 
             total_loss=total_loss/(len(train_dataloader))
             total_label_loss=total_label_loss/(len(train_dataloader))
             total_acc=total_acc/(len(train_dataloader))
 
             print('Train Epoch:',i+1,'loss:',total_loss)
-            print('test loss1:',test_loss,'test accuracy1:',test_acc)
+            print('val loss:',val_loss,'val accuracy:',val_acc)
 
-            if best_test_acc<test_acc:
-                best_test_acc=test_acc
-                print('Loss improved, saving weights')
-                torch.save(small_model.state_dict(),f'model/{small_model_name}_distilled_otherbest_param.pkl')
-            loss_results.append((total_label_loss,test_loss))
-            acc_results.append((total_acc,test_acc))
+            loss_results.append((total_loss,val_loss))
+            acc_results.append((total_acc,val_acc))
 
-        plt.plot(loss_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Cross Entropy loss")
-        plt.legend(['train loss','valid loss'])
-        plt.title(f'{small_model_name} loss')
-        plt.show()
+        small_model.eval()
+        test_loss, test_labels, test_probabilities = test(small_model, test_dataloader, test_loss_fn)
+        test_pred_labels = np.argmax(test_probabilities, axis=1)
+        test_acc = np.mean(test_pred_labels == test_labels)
+        print(f"Test set accuracy for fold {fold+1}: {test_acc}")
 
-        plt.plot(acc_results)
-        plt.xlabel("Epochs")
-        plt.ylabel("Accuracy")
-        plt.legend(['train accuracy','valid accuracy'])
-        plt.title(f'{small_model_name} accuracy')
-        plt.show()
+        if best_test_acc<test_acc:
+            best_test_acc=test_acc
+            print('Loss improved, saving weights')
+            torch.save(small_model.state_dict(),f'model/{small_model_name}_distilled_otherbest_param.pkl')
 
-    # Save best accuracy for this fold
-    with open(results_file, mode='a', newline='') as f:
-        writer = csv.writer(f)
-        if f.tell() == 0:
-            writer.writerow(['script', 'model', 'fold', 'best_accuracy'])
-        writer.writerow([script_name, small_model_name, fold+1, best_test_acc])
+        # Save loss and accuracy results for this fold
+        all_loss_results.append(loss_results)
+        all_acc_results.append(acc_results)
+
+        final_val_acc = acc_results[-1][1]
+
+        # Save best accuracy for this fold
+        with open(results_file, mode='a', newline='') as f:
+            writer = csv.writer(f)
+            if f.tell() == 0:
+                writer.writerow(['script', 'model', 'fold', 'valid_accuracy', 'test_accuracy'])
+            writer.writerow([script_name, small_model_name, fold+1, final_val_acc, test_acc])
+
+    # Plot all folds overlapped for loss (epochs 1 to 20)
+    plt.figure()
+    epochs_range = range(1, 21)
+    for fold, loss_results in enumerate(all_loss_results):
+        train_losses = [x[0] for x in loss_results]
+        val_losses = [x[1] for x in loss_results]
+        plt.plot(epochs_range, train_losses, label=f"Fold {fold+1} train", alpha=0.5)
+        plt.plot(epochs_range, val_losses, label=f"Fold {fold+1} valid", linestyle='--', alpha=0.5)
+    plt.xlabel("Epochs")
+    plt.ylabel("Cross Entropy loss")
+    plt.title(f"{small_model_name} loss (all folds)")
+    plt.xlim(1, 20)
+    plt.xticks(epochs_range)
+    plt.legend()
+    plt.savefig(f"{script_name}_{small_model_name}_loss.png")
+    plt.show()
+
+    # Plot all folds overlapped for accuracy (epochs 1 to 20)
+    plt.figure()
+    for fold, acc_results in enumerate(all_acc_results):
+        train_accs = [x[0] for x in acc_results]
+        val_accs = [x[1] for x in acc_results]
+        plt.plot(epochs_range, train_accs, label=f"Fold {fold+1} train", alpha=0.5)
+        plt.plot(epochs_range, val_accs, label=f"Fold {fold+1} valid", linestyle='--', alpha=0.5)
+    plt.xlabel("Epochs")
+    plt.ylabel("Accuracy")
+    plt.title(f"{small_model_name} accuracy (all folds)")
+    plt.xlim(1, 20)
+    plt.xticks(epochs_range)
+    plt.legend()
+    plt.savefig(f"{script_name}_{small_model_name}_acc.png")
+    plt.show()
